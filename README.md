@@ -1,10 +1,10 @@
-# 方哥修复版~ · ProPilot 一键永久修复工具
+#  ~ · ProPilot 一键永久修复工具
 
 > **ProPilotFix** — Make ProPilot 9 (the AI assistant inside Proteus 9) work with **your own** OpenAI-compatible API. One-click permanent patch, Chinese UI, custom model, **no background process, no auto-start**.
 >
 > 仓库：https://github.com/nuoyafz/Proteus-ProteusAI-Unlock · 作者：方哥（nuoyafz）
 
-让 Proteus 9 自带的 **ProPilot** AI 助手用你自己的 API 正常聊天：能连自定义接口 / 中转站、能改模型、界面全中文、窗口标题变成「方哥修复版~」。
+让 Proteus 9 自带的 **ProPilot** AI 助手用你自己的 API 正常聊天：能连自定义接口 / 中转站、能改模型、界面全中文、窗口标题变成「 ~」。
 **点一次就永久生效**：改完 DLL + 注册表，之后开机直接打开 Proteus 9 就能聊，不用启动任何工具、不用挂代理、不用设开机自启。
 
 只解决「聊天」这一件事，不碰原理图、不碰 MCP、不常驻任何进程。
@@ -33,7 +33,7 @@
 | 文件 | 说明 |
 | --- | --- |
 | **[⬇ Releases · v1.0.0](https://github.com/nuoyafz/Proteus-ProteusAI-Unlock/releases/tag/v1.0.0)** | **推荐**。下载页面里的附件（页面显示中文名，保存名 `ProPilotFix.exe`） |
-| [`release/方哥修复版.exe`](release/方哥修复版.exe) | 仓库内直链，约 10 MB。Windows 单文件 GUI，无需装 Python、无需安装 |
+| [`release/ .exe`](release/ .exe) | 仓库内直链，约 10 MB。Windows 单文件 GUI，无需装 Python、无需安装 |
 | `ProPilotFixGUI.py` + `ProPilotFix.py` | 源码，纯 Python 标准库，想自己改 / 自己打包用 |
 
 > 两个 exe 内容完全一致（SHA256 `623b6f57f284cc6ab65c93734c37e457897305825addb5d50360d42910d42c7a`）。GitHub 的 Release 附件接口不接受中文文件名，所以 Release 里保存名是 `ProPilotFix.exe`、显示名标成中文。下载后放桌面、微信下载目录、U 盘都行，**别放进 `ProPilot.dll` 目录**。
@@ -56,7 +56,7 @@
 ## 三步使用
 
 1. **完全退出 Proteus 9**（不退出 DLL 被占用，且它退出时会把旧配置写回注册表）。
-2. 双击 `方哥修复版.exe` → 程序自动搜索 `ProPilot.dll`（卸载表 → 常见安装路径 → 全盘限时扫描）；找不到就点「浏览…」手动选 Proteus 安装目录下的 `BIN` 文件夹。
+2. 双击 ` .exe` → 程序自动搜索 `ProPilot.dll`（卸载表 → 常见安装路径 → 全盘限时扫描）；找不到就点「浏览…」手动选 Proteus 安装目录下的 `BIN` 文件夹。
    界面右上角显示「● 非管理员」时，点一下「点此以管理员重启」（DLL 装在 `C:\Program Files` 下需要写权限）。
 3. 在「② 接口配置」里填**你自己的** 3 项，然后按顺序点两个按钮：
 
@@ -115,7 +115,7 @@ ProPilot 的 Custom 服务商有 **3 条互相矛盾的 URL 拼装规则**：
 | 原版问题 | 修复做法 | 效果 |
 | --- | --- | --- |
 | ① 自定义接口连不上 | 由配置反推出**正确的根地址**写进注册表；ProPilot 自己拼 `/v1/chat/completions` 和 `/v1/models` | **纯直连**：ProPilot → 你的上游，中间没有任何进程 |
-| ② 全英文 | 原地替换 `ProPilot.dll` 的 `.rdata` 里 **64 条** UTF-8 字符串常量（含主窗口标题） | 设置、按钮、报错全中文；主窗口标题写死为「方哥修复版~」 |
+| ② 全英文 | 原地替换 `ProPilot.dll` 的 `.rdata` 里 **64 条** UTF-8 字符串常量（含主窗口标题） | 设置、按钮、报错全中文；主窗口标题写死为「 ~」 |
 | ③ 模型写死 | 把 `FUN_18007ce60` 首条 `LEA RDX,[rip+disp32]` 的 disp32 指向 `.rdata` 空闲块（`0x171182`），块内写入你的模型名；清空 `No Model` / `Loading models...` 占位符 | 下拉框首项就是你的模型，点 OK 写回的也是它 |
 | ④ 密钥污染 | 清理误填成 URL 的 `apikey`；密钥统一以配置为准（base64 写入注册表），不被客户端残留头覆盖 | 换自己的接口/密钥立刻生效，不再 401 |
 | 常驻代理 / 自启 | 默认**不启用**代理、不写任何开机自启项 | 一次修复永久生效，开机直接开 Proteus 就能聊 |
@@ -195,7 +195,7 @@ flowchart LR
 | 修复后聊天还是不通 | ① 你的上游服务必须正在运行；② **完全退出并重开 Proteus 9**（不重启不加载新 DLL / 新配置）；③ 点「● 接口自检」看结论 |
 | 换模型 / 换中转站 | 界面改完再点一次「★ 一键永久修复」；也可直接编辑 DLL 目录下的 `ProPilotFix.json` |
 | 配置存哪 | `ProPilot.dll` 同目录的 `ProPilotFix.json`。**里面有你的 API 密钥，千万别上传 / 提交到 Git** |
-| 窗口标题想改 | 标题「方哥修复版~」在 `ProPilotFix.py` 的 `WINDOW_TITLE` 里写死（界面和配置文件都改不了，防篡改）。想换成自己的名字：改这一行后重新打包 exe |
+| 窗口标题想改 | 标题「 ~」在 `ProPilotFix.py` 的 `WINDOW_TITLE` 里写死（界面和配置文件都改不了，防篡改）。想换成自己的名字：改这一行后重新打包 exe |
 
 界面其它按钮：`只读体检`（体检 DLL/汉化/模型/注册表）、`配置自检`（打印实际生效值）、`端到端自测`（13 条 URL 路径）、`一键还原`、`打开所在文件夹`（看日志 / 备份）。
 
@@ -241,8 +241,8 @@ py -3.10 ProPilotFix.py rollback   # 还原
 
 # 打包单文件 GUI exe
 py -3.10 -m pip install pyinstaller
-py -3.10 -m PyInstaller --noconfirm --clean --onefile --windowed --name "方哥修复版" ProPilotFixGUI.py
-# 产物：dist/方哥修复版.exe
+py -3.10 -m PyInstaller --noconfirm --clean --onefile --windowed --name " " ProPilotFixGUI.py
+# 产物：dist/ .exe
 ```
 
 `ProPilotFixGUI.py` 会 `import ProPilotFix`，PyInstaller 会自动把核心模块打进同一个 exe，无需额外 `--add-data`。项目零第三方依赖（GUI 用 tkinter，网络用标准库）。
@@ -259,7 +259,7 @@ propilot-fix/
 ├── ProPilotFix.py         核心：DLL 补丁、注册表、直连推导、接口自检、兼容代理
 ├── ProPilotFixGUI.py      GUI（自动找 DLL、配置回显、一键操作、运行日志）
 └── release/
-    └── 方哥修复版.exe     开箱即用的单文件 GUI
+    └──  .exe     开箱即用的单文件 GUI
 ```
 
 运行时会在 **`ProPilot.dll` 同目录**生成（都不该提交）：
@@ -285,4 +285,4 @@ propilot-fix/
 
 ---
 
-MIT License · 作者：方哥（漩涡鸣人） · 主窗口标题写死「方哥修复版~」当作署名，想换成自己的名字看[第五节](#五常见问题与错误码)。
+MIT License · 作者：方哥（漩涡鸣人） · 主窗口标题写死「 ~」当作署名，想换成自己的名字看[第五节](#五常见问题与错误码)。
