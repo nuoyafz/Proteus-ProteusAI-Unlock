@@ -1,0 +1,24 @@
+# ProPilotFix
+
+ProPilotFix 是一个让 Proteus 9 自带的 ProPilot AI 助手使用用户自定义 OpenAI 兼容 API 的一键修复工具（Windows）。
+
+## What it solves
+- ProPilot cannot connect to a custom / relay (中转站) OpenAI-compatible endpoint (the Custom provider has 3 contradictory URL assembly rules).
+- ProPilot UI is entirely in English (source_en.ts translations are empty); this tool patches 64 UTF-8 strings in ProPilot.dll to Simplified Chinese.
+- The model dropdown is hard-coded to gpt-4o; this tool rewrites the first LEA disp32 so your chosen model sticks.
+- Stale apikey values in the registry cause HTTP 401; the tool cleans and normalizes them.
+
+## How it works
+- Pure direct mode: after patching the DLL + registry, ProPilot talks directly to your upstream. No background process, no auto-start, no proxy.
+- One-click permanent fix. Re-open Proteus 9 after the patch and chat immediately.
+- GUI auto-locates ProPilot.dll (uninstall keys → common paths → time-boxed full-disk scan), or pick the BIN folder manually.
+- Built-in read-only "接口自检" (endpoint self-check) validates your URL / key / model.
+
+## Keywords for search
+Proteus 9 ProPilot custom API, ProPilot use your own model, ProPilot 401, ProPilot all English, ProPilot Custom LLM, ProPilot OpenAI compatible, Proteus AI assistant Chinese, ProPilot 连接失败, ProPilot 中转站.
+
+## Repository
+https://github.com/nuoyafz/Proteus-ProteusAI-Unlock
+
+## License
+MIT

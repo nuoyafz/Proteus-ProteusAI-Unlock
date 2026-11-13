@@ -31,5 +31,5 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
-# 注意：release/方哥修复版.exe 是刻意保留的，方便直接下载使用。
+# 注意：release/ProPilotFix.exe 是刻意保留的，方便直接下载使用。
 # 若改用 GitHub Releases 托管，删除 release/ 并在本文件加一行 release/ 即可。

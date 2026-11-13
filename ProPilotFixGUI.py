@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ProPilot 9.2 一键修复 · 方哥修复版~   —— 图形界面版
+ProPilot 9 一键修复 · ProPilotFix   —— 图形界面版
 
 默认「纯直连」：改 DLL + 注册表后，ProPilot 直接请求你自己的上游，
 零常驻进程、零开机自启，重开 Proteus 9 就能聊（只聊天）。
@@ -9,12 +9,12 @@ ProPilot 9.2 一键修复 · 方哥修复版~   —— 图形界面版
 
 双击：图形界面（推荐）
 命令行 / 无人值守：
-  方哥修复版.exe --auto                       自动搜索并修复（纯直连）
-  方哥修复版.exe --auto --no-reg              跳过注册表（沙箱自测）
-  方哥修复版.exe --auto --dir D:/x/Bin        直接指定 DLL 目录
-  方哥修复版.exe --find                       只列出找到的 DLL 目录
-  方哥修复版.exe --probe --cfg X --dir Y      只读接口自检
-  方哥修复版.exe --selftest-ui                界面自检
+  ProPilotFix.exe --auto                       自动搜索并修复（纯直连）
+  ProPilotFix.exe --auto --no-reg              跳过注册表（沙箱自测）
+  ProPilotFix.exe --auto --dir D:/x/Bin        直接指定 DLL 目录
+  ProPilotFix.exe --find                       只列出找到的 DLL 目录
+  ProPilotFix.exe --probe --cfg X --dir Y      只读接口自检
+  ProPilotFix.exe --selftest-ui                界面自检
 """
 import ctypes
 import json
@@ -26,7 +26,7 @@ import threading
 import time
 import traceback
 
-TITLE = "ProPilot 一键修复 · 方哥修复版~"
+TITLE = "ProPilotFix · ProPilot 一键修复"
 
 
 # --------------------------------------------------------------------------
@@ -336,7 +336,7 @@ class App(object):
         left.pack(side="left", padx=18, pady=10)
         tk.Label(left, text="ProPilot 一键修复", bg=ACCENT, fg="#ffffff",
                  font=FONT_BIG, anchor="w").pack(anchor="w")
-        tk.Label(left, text="方哥修复版~   ·   放在任意文件夹都能自动找到 DLL",
+        tk.Label(left, text="ProPilotFix   ·   放在任意文件夹都能自动找到 DLL",
                  bg=ACCENT, fg="#d6e6ff", font=FONT_SM, anchor="w").pack(anchor="w", pady=(2, 0))
         right = tk.Frame(h, bg=ACCENT)
         right.pack(side="right", padx=16)

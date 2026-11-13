@@ -70,7 +70,7 @@ if hasattr(sys.stdout, "reconfigure"):
 TOOL = "ProPilotFix 1.0"
 
 # 主窗口标题：写死在程序里，界面、配置文件、命令行都改不了
-WINDOW_TITLE = "方哥修复版~"
+WINDOW_TITLE = "ProPilotFix"
 
 # ==========================================================================
 #  固定条件区  —— 换环境只改这里，或改同目录的 ProPilotFix.json
