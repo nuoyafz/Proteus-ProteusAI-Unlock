@@ -1,0 +1,35 @@
+# ==== 密钥 / 本机配置：绝对不要提交 ====
+ProPilotFix.json
+*.json.bak
+*_cfg.json
+
+# ==== 绝不分发任何 Labcenter 二进制 ====
+*.dll
+*.dll.orig
+*.dll.fz_bak
+ProPilotFix_registry.json
+
+# ==== 运行产物 ====
+ProPilotFix.log
+ProPilotFix_auto.log
+ProPilotFix_bridge.pid
+*.log
+
+# ==== Python ====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ==== PyInstaller ====
+build/
+dist/
+*.spec
+
+# ==== 系统 ====
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 注意：release/方哥修复版.exe 是刻意保留的，方便直接下载使用。
+# 若改用 GitHub Releases 托管，删除 release/ 并在本文件加一行 release/ 即可。
