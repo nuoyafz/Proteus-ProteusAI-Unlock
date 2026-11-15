@@ -6,10 +6,11 @@ ProPilotFix 是一个让 Proteus 9 自带的 ProPilot AI 助手使用用户自�
 - ProPilot cannot connect to a custom / relay (中转站) OpenAI-compatible endpoint (the Custom provider has 3 contradictory URL assembly rules).
 - ProPilot UI is entirely in English (source_en.ts translations are empty); this tool patches 64 UTF-8 strings in ProPilot.dll to Simplified Chinese.
 - The model dropdown is hard-coded to gpt-4o; this tool rewrites the first LEA disp32 so your chosen model sticks.
-- Stale apikey values in the registry cause HTTP 401; the tool cleans and normalizes them.
+- Stale apikey values in the registry cause HTTP 401; the tool writes your key from config.
+- **v2: the URL you type is used verbatim.** The tool patches Custom's bare URL suffixes (`/v1/chat/completions` → `/chat/completions`, `/v1/models` → `/models`), so you fill the address up to `/v1` and it just works — no stripping /v1, no guessing.
 
 ## How it works
-- Pure direct mode: after patching the DLL + registry, ProPilot talks directly to your upstream. No background process, no auto-start, no proxy.
+- Chat-only, single path, pure direct: after patching the DLL + registry, ProPilot talks directly to your upstream. No proxy, no background process, no auto-start, no URL normalization.
 - One-click permanent fix. Re-open Proteus 9 after the patch and chat immediately.
 - GUI auto-locates ProPilot.dll (uninstall keys → common paths → time-boxed full-disk scan), or pick the BIN folder manually.
 - Built-in read-only "接口自检" (endpoint self-check) validates your URL / key / model.

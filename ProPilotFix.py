@@ -1,55 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-ProPilotFix —— ProPilot 9.2 自定义接口 / 汉化 一键永久修复工具
-纯标准库、零第三方依赖、可分发；本版本不含任何私人地址 / 密钥 / 模型。
+ProPilotFix —— ProPilot 9.2 自定义接口 / 汉化 一键永久修复（只聊天 · 一条路）
 
-解决什么：Proteus 9 自带的 ProPilot AI 助手用「自定义接口」连不上自己的
-OpenAI 兼容服务、界面全英文、模型被写死 gpt-4o。本工具一次性改写
-ProPilot.dll 里的字符串常量 + 写注册表，之后 ProPilot 直接请求你自己的上游
-（纯直连），零常驻进程、零开机自启，重开 Proteus 就能聊。详见 README.md。
+干什么：让 Proteus 9 自带的 ProPilot AI 助手用自己的 OpenAI 兼容接口正常聊天。
+  · 改 ProPilot.dll：汉化 64 条界面 + 主窗口标题 + 模型下拉框首项 +
+    Custom 的 URL 后缀由 /v1/chat/completions 改成 /chat/completions
+  · 写注册表：接口地址「原样」保存（填到 /v1 为止），密钥、模型一并写好
+  · 之后 ProPilot 直接请求你自己的上游：零常驻进程、零开机自启、只聊天
 
-修的是什么（REA/Ghidra 逆向 + 真机日志实证）：
-  1) 汉化 64 条界面 / 报错文案 + 主窗口标题。source_en.ts 里 ProPilot 条目
-     是空译文，Qt 查不到译文会回退源串，故原地改 .rdata 里的 UTF-8 常量
-     即可，不动代码。
-  2) 模型下拉框：FUN_18007ce60 写死 5 个 gpt 模型，点 OK 会把首项
-     gpt-4o 写回注册表，覆盖用户保存的模型。改首条 LEA 的 disp32 指向
-     .rdata 空闲块里写入的目标模型（可反复更换，不会卡在旧模型）。
-  3) 注册表：Custom(4) 写入上游「根地址」/ 模型 / 密钥，清理占位符脏值。
-     ProPilot 自己拼 /v1/chat/completions 与 /v1/models。
-  4) 兼容代理（手动兜底，默认不启用）：ProPilot 三条 URL 规则互相矛盾
-       聊天      baseUrl + /v1/chat/completions
-       模型表    baseUrl + /v1/models
-       测试连接  baseUrl 原样 POST（POST /v1 -> 404）
-     代理把所有写法归一到上游正确路由；强制把请求里硬编码的 gpt-4o
-     纠正成配置模型；模型表返回 data[].id + models[].name 双格式。
+为什么改后缀（v2 核心）：ProPilot 原本会把 baseUrl 硬拼上 /v1/chat/completions，
+所以旧版工具要先把用户填的地址「剥掉 /v1」才拼得对 —— 用户看到地址被改，觉得乱。
+新版直接把 DLL 的裸后缀改成 /chat/completions（模型表 /models），于是
+「你填什么就是什么」：
+      你填  http://127.0.0.1:8000/v1
+      请求  http://127.0.0.1:8000/v1/chat/completions
+      注册表里的地址一个字不改。
 
-命令（命令行版；日常推荐 GUI：python ProPilotFixGUI.py）：
-  python ProPilotFix.py fix        一键修复（纯直连，默认）
-  python ProPilotFix.py probe      接口自检：只读探测自己的上游能不能聊
-  python ProPilotFix.py check      只读体检（DLL / 汉化 / 模型 / 注册表）
-  python ProPilotFix.py cfgcheck   打印实际生效配置
-  python ProPilotFix.py test       端到端自测（同进程起代理，13 条路径）
-  python ProPilotFix.py serve      手动启动兼容代理（不自启）
-  python ProPilotFix.py fixreg     只修注册表（Proteus 退出写回后重跑）
-  python ProPilotFix.py rollback   一键还原 DLL + 注册表
-  --no-reg                         任意命令后附加：跳过所有注册表读写
-  --dir X                          指定 ProPilot.dll 所在目录
+命令（命令行版；日常推荐 GUI：ProPilotFixGUI.py）：
+  fix       一键永久修复（默认）
+  probe     接口自检：只读探测自己的地址能不能聊
+  check     只读体检（DLL / 汉化 / 后缀 / 模型 / 注册表）
+  cfgcheck  打印实际生效配置
+  fixreg    只写注册表
+  rollback  一键还原 DLL + 注册表
+  --no-reg  任意命令后附加：跳过注册表读写（测试用）
+  --dir X   指定 ProPilot.dll 所在目录
 
 备份：ProPilot.dll.orig（只建一次，永不覆盖）+ ProPilotFix_registry.json
 日志：ProPilotFix.log
-配置：ProPilotFix.json（含你的 API 密钥，切勿提交到 Git）
+配置：ProPilotFix.json（含密钥，切勿提交到 Git）
 """
 import base64
 import ctypes
 import hashlib
-import http.client
 import json
 import os
 import re
 import shutil
 import struct
-import subprocess
 import sys
 import tempfile
 import threading
@@ -57,7 +45,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 try:
     import winreg
@@ -67,27 +54,21 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-TOOL = "ProPilotFix 1.0"
+TOOL = "ProPilotFix 2.0"
 
 # 主窗口标题：写死在程序里，界面、配置文件、命令行都改不了
 WINDOW_TITLE = "ProPilotFix"
 
 # ==========================================================================
-#  固定条件区  —— 换环境只改这里，或改同目录的 ProPilotFix.json
+#  配置 —— 换环境改这里，或改同目录的 ProPilotFix.json
 # ==========================================================================
 DEFAULT_CFG = {
-    # 下面 3 项只是「示例值」，不代表任何人的配置，也不是推荐的服务商。
-    # ★ 必须改成你自己的：改界面上那 4 项，或改 DLL 目录里的 ProPilotFix.json ★
-    # 上游可填根地址 / 带 /v1 / 完整 chat 路径，脚本会归一；
-    # 任意 OpenAI 兼容服务（云 API / 中转站 / Ollama / 本地服务）都行。
+    # 只是示例值，不是任何人的配置。★ 改成你自己的 ★
+    # 地址填到 /v1 为止（例如 https://api.openai.com/v1）；本地服务可留空密钥。
     "upstream": "https://api.openai.com/v1",
-    "api_key": "",              # 本地服务可留空；云 API / 中转站填自己的密钥
-    "model": "gpt-4o-mini",     # 换成中转站给你的模型名，例如 deepseek-chat / qwen-plus
-    "bridge_port": 18901,       # ProPilot 的「接口根地址」会指向这里
-    "provider_id": 4,           # 4 = Custom
-    "force_model": True,        # 强制纠正请求里硬编码的 gpt-4o
-    "extra_models": 0,          # 模型下拉框额外列出几个上游模型，0 = 只列目标模型
-    "trust_client_key": False,  # False=始终用配置里的密钥（不被 ProPilot 残留值污染）
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "provider_id": 4,           # 4 = Custom（自定义）
 }
 
 ORIG_SHA = "35be5f09eca913947e512c2b3d6fb8803b7ad9e3c8d4a65c2399f946354f5414"
@@ -96,11 +77,17 @@ IMAGE_BASE = 0x180000000
 LEA_FO = 0x7C289        # FUN_18007ce60 首条 LEA RDX,[rip+disp32]
 STR_FO = 0x171182       # .rdata 内 110 字节全 0 空闲块
 
+# URL 里会出现的字符：出现这些说明这个 /v1/... 片段是「完整 URL 模板」的一部分，
+# 不是 Custom 的裸后缀，绝不改它。
+URL_CHARS = frozenset(b"abcdefghijklmnopqrstuvwxyz"
+                      b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                      b"0123456789.-:/_")
+
+
 # ==========================================================================
-#  路径：全部相对脚本自身，脚本放 DLL 同目录即可
+#  路径：全部相对脚本自身
 # ==========================================================================
 def base_dir():
-    # GUI / 外部调用可用环境变量指定工作目录（ProPilot.dll 所在文件夹）
     override = os.environ.get("PROPILOTFIX_DIR")
     if override and os.path.isdir(override):
         return override
@@ -111,21 +98,18 @@ def base_dir():
 
 def set_work_dir(path):
     """把工作目录切到 ProPilot.dll 所在文件夹。
-    DLL / 备份 / 配置 / 日志全部跟着走，GUI 版靠它支持「工具放任意目录」。
-    命令行版在模块加载时调用一次，行为与旧版完全一致。"""
-    global HERE, DLL, ORIG, OLD_BAK, REG_BAK, CFG_FILE, LOG, BRIDGE_PID
+    DLL / 备份 / 配置 / 日志全部跟着走，GUI 版靠它支持「工具放任意目录」。"""
+    global HERE, DLL, ORIG, OLD_BAK, REG_BAK, CFG_FILE, LOG
     HERE = os.path.abspath(path)
     DLL = os.path.join(HERE, "ProPilot.dll")
     ORIG = os.path.join(HERE, "ProPilot.dll.orig")
-    OLD_BAK = os.path.join(HERE, "ProPilot.dll.fz_bak")   # 兼容旧版脚本的备份
+    OLD_BAK = os.path.join(HERE, "ProPilot.dll.fz_bak")
     REG_BAK = os.path.join(HERE, "ProPilotFix_registry.json")
     CFG_FILE = os.path.join(HERE, "ProPilotFix.json")
     LOG = os.path.join(HERE, "ProPilotFix.log")
-    BRIDGE_PID = os.path.join(HERE, "ProPilotFix_bridge.pid")
     return HERE
 
 
-# 模块级初始化与 GUI 运行时切换共用同一套逻辑
 set_work_dir(base_dir())
 KEY_ROOT = r"Software\Labcenter Electronics\%s\PROPILOT" % REG_PRODUCT
 LC = r"LLM Configuration"
@@ -173,19 +157,16 @@ def load_cfg(interactive=True):
         print("首次运行：请填 3 项（直接回车用默认值）")
         print("=" * 68)
         try:
-            v = input("  上游地址 [%s]: " % c["upstream"]).strip()
+            v = input("  接口地址（填到 /v1 为止）[%s]: " % c["upstream"]).strip()
             if v:
                 c["upstream"] = v
-            v = input("  API 密钥 [%s]: " % c["api_key"][:12] + "...").strip()
+            v = input("  API 密钥 [%s]: " % (c["api_key"][:12] + "..." if c["api_key"] else "可留空")).strip()
             if v:
                 c["api_key"] = v
             v = input("  模型名   [%s]: " % c["model"]).strip()
             if v:
                 c["model"] = v
-            v = input("  代理端口 [%s]: " % c["bridge_port"]).strip()
-            if v:
-                c["bridge_port"] = int(v)
-        except (EOFError, KeyboardInterrupt, ValueError):
+        except (EOFError, KeyboardInterrupt):
             log("[!] 非交互或输入无效，使用内置默认值。之后可改 " + CFG_FILE)
     save_cfg(c)
     log("[i] 配置已写入 " + CFG_FILE + "（以后可用记事本直接改）")
@@ -319,7 +300,6 @@ def capacity(d, off, n):
 
 
 def ui_items():
-    """全部汉化条目 = 固定映射 + 写死的主窗口标题。"""
     items = list(UI_MAP)
     items.append((TITLE_FO, TITLE_ENG, [WINDOW_TITLE]))
     return items
@@ -413,7 +393,6 @@ def patch_model(d, model):
     mb = model.encode("utf-8") + b"\0"
     cur_fo = v2o(secs, tgt_va)
     # 之前本工具打过补丁：LEA 指向我们自己的空闲块，允许整块重写以更换模型。
-    # 旧逻辑在这里直接 return，导致「改了模型但 DLL 下拉框还是旧模型」。
     cur_b = cur.encode("utf-8")
     own_block = (cur_fo == STR_FO and bool(cur)
                  and bytes(d[STR_FO:STR_FO + len(cur_b) + 1]) == cur_b + b"\0")
@@ -451,6 +430,55 @@ def patch_model(d, model):
     if check != model:
         return -1, "模型补丁校验失败，读回 %r" % check
     return 1, "下拉框首项 %r -> %r  (%s)" % (cur, model, where)
+
+
+# ==========================================================================
+#  ② 地址后缀补丁：让注册表能「原样」保存用户填的地址
+#  Custom 用的裸后缀 /v1/chat/completions -> /chat/completions
+#                 /v1/models          -> /models
+#  只动裸后缀，内置服务商（OpenAI/DeepSeek/xAI…）的完整 URL 模板一律不碰。
+# ==========================================================================
+def _bare_suffix(d, old, new):
+    """返回 Custom 当前用的裸后缀：独立 C 串，前一个字节是字符串边界（不是 URL 字符）。"""
+    for cand in (old, new):
+        j = 0
+        while True:
+            j = d.find(cand, j)
+            if j < 0:
+                break
+            if j == 0 or d[j - 1] not in URL_CHARS:
+                return cand.decode()
+            j += 1
+    return "?"
+
+
+def custom_chat_suffix(d):
+    return _bare_suffix(d, b"/v1/chat/completions", b"/chat/completions")
+
+
+def custom_models_suffix(d):
+    return _bare_suffix(d, b"/v1/models", b"/models")
+
+
+def patch_endpoint(d):
+    """把 Custom 的裸后缀改成 /chat/completions 与 /models，返回 (改动数, 说明)。"""
+    changed, notes = 0, []
+    for old, new, label in ((b"/v1/chat/completions", b"/chat/completions", "聊天"),
+                            (b"/v1/models", b"/models", "模型表")):
+        j = 0
+        while True:
+            j = d.find(old, j)
+            if j < 0:
+                break
+            if j != 0 and d[j - 1] in URL_CHARS:
+                j += 1                       # 完整 URL 模板的一部分，跳过
+                continue
+            d[j:j + len(old)] = new + b"\0" * (len(old) - len(new))
+            changed += 1
+            notes.append("%s裸后缀 0x%X: %s -> %s" %
+                         (label, j, old.decode(), new.decode()))
+            j += len(new)
+    return changed, notes
 
 
 def diff_report(a, b):
@@ -606,131 +634,110 @@ def reg_del(sub, name):
         return False
 
 
-def reg_fix(cfg, direct=True):
-    ep = (direct_base_url(cfg) if direct
-          else "http://127.0.0.1:%d" % int(cfg["bridge_port"]))
-    pid = int(cfg["provider_id"])
+# ==========================================================================
+#  地址：注册表原样保存「你填的地址」，DLL 已改成只拼 /chat/completions
+# ==========================================================================
+def upstream_base(cfg):
+    """用户填的地址原样用；只去掉末尾斜杠，以及误带的 /chat/completions 或 /models。
+    这样「填到 /v1」和「填了完整 chat 地址」两种都认，且不改动有意义的部分。"""
+    u = str(cfg.get("upstream", "")).strip().rstrip("/")
+    for suf in ("/chat/completions", "/models"):
+        if u.endswith(suf):
+            u = u[:-len(suf)]
+    return u
+
+
+def chat_url(cfg):
+    return upstream_base(cfg) + "/chat/completions"
+
+
+def models_url(cfg):
+    return upstream_base(cfg) + "/models"
+
+
+def _mask(key):
+    k = str(key or "")
+    return "(空)" if not k else (k[:4] + "***" + k[-2:] if len(k) > 8 else "***")
+
+
+def reg_fix(cfg):
+    ep = upstream_base(cfg)
+    pid = int(cfg.get("provider_id", 4))
     reg_set(LC, "activeProvider", pid, winreg.REG_DWORD)
     p = LC + (r"\Providers\%d" % pid)
-    reg_set(p, "baseUrl", ep)
+    reg_set(p, "baseUrl", ep)                       # ★ 原样，不再剥 /v1
     reg_set(p, "model", cfg["model"])
-    reg_set(p, "apikey", base64.b64encode(cfg["api_key"].encode("utf-8")).decode("ascii"))
+    reg_set(p, "apikey",
+            base64.b64encode(str(cfg.get("api_key", "")).encode("utf-8")).decode("ascii"))
     reg_set(p, "temperature", "0.5")
     reg_set(p, "maxTokens", 10000, winreg.REG_DWORD)
     reg_set(p, "enableWebSearch", "false")
     reg_set(p, "enableThinking", "false")
     reg_set(p, "enableStreaming", "false")
-    log("    [%d] Custom  -> %s / %s   模式=%s" %
-        (pid, ep, cfg["model"], "纯直连(只聊天)" if direct else "后台代理"))
+    log("    [%d] 接口地址 -> %s   （原样，不改）" % (pid, ep))
+    log("    [%d] 模型 -> %s   密钥 -> %s   只聊天(Web/Thinking/Stream=关)" %
+        (pid, cfg["model"], _mask(cfg.get("api_key"))))
     cur_model, _ = reg_get(p, "model")
     if cur_model in (None, "", "Loading models...", "No Model"):
         reg_set(p, "model", cfg["model"])
         log("    [%d] 模型占位符 %r 已复位为 %s" % (pid, cur_model, cfg["model"]))
 
-    p3 = LC + r"\Providers\3"
-    reg_set(p3, "baseUrl", ep)
-    reg_set(p3, "model", cfg["model"])
-    log("    [3] Ollama 备用槽同步")
-
-    p1 = LC + r"\Providers\1"
-    v, _ = reg_get(p1, "apikey")
-    if isinstance(v, str) and v.startswith(("http://", "https://")):
-        if reg_del(p1, "apikey"):
-            log("    [1] 已删除误填在密钥框里的 URL")
-    m, _ = reg_get(p1, "model")
-    if m in (None, "", "Loading models...", "No Model"):
-        reg_set(p1, "model", "gpt-4o-mini")
-        log("    [1] 模型占位符已复位")
-
 
 # ==========================================================================
-#  内置兼容代理
+#  配置校验 / 自检
 # ==========================================================================
-UP = {}
+def validate_cfg(cfg):
+    errs = []
+    up = str(cfg.get("upstream", "")).strip()
+    if not up:
+        errs.append("接口地址不能为空（填到 /v1 为止，例如 http://127.0.0.1:8000/v1）")
+    else:
+        try:
+            if not urllib.parse.urlsplit(up).hostname:
+                errs.append("接口地址解析不出主机名：%r" % up)
+        except Exception as e:
+            errs.append("接口地址无法解析：%r" % (e,))
+    if not str(cfg.get("model", "")).strip():
+        errs.append("模型名不能为空")
+    return errs
 
 
-def init_bridge(cfg):
-    u = urllib.parse.urlsplit(cfg["upstream"])
-    https = u.scheme.lower() == "https"
-    path = u.path.rstrip("/")
-    for suf in ("/chat/completions", "/models"):
-        if path.endswith(suf):
-            path = path[:-len(suf)]
-    if not path:
-        path = "/v1"
-    UP.update({
-        "https": https,
-        "host": u.hostname,
-        "port": u.port or (443 if https else 80),
-        "chat": path + "/chat/completions",
-        "models": path + "/models",
-        "api_key": cfg["api_key"],
-        "model": cfg["model"],
-        "force": bool(cfg.get("force_model", True)),
-        "extra": int(cfg.get("extra_models", 0)),
-        "trust_client": bool(cfg.get("trust_client_key", False)),
-        "listen": int(cfg["bridge_port"]),
-        "upstream": cfg["upstream"],
-    })
-    return UP
-
-
-def direct_base_url(cfg):
-    """纯直连：ProPilot 自己会拼 /v1/chat/completions 和 /v1/models，
-    所以注册表 baseUrl 必须是「去掉 /v1 的上游根地址」。"""
-    u = init_bridge(cfg)
-    chat = u["chat"]
-    suffix = "/v1/chat/completions"
-    prefix = (chat[:-len(suffix)] if chat.endswith(suffix)
-              else chat[:-len("/chat/completions")])
-    netloc = u["host"]
-    if (u["https"] and u["port"] != 443) or (not u["https"] and u["port"] != 80):
-        netloc += ":%d" % u["port"]
-    return "%s://%s%s" % ("https" if u["https"] else "http",
-                          netloc, prefix.rstrip("/"))
+def cfg_report(cfg):
+    """把「实际生效」的配置打出来对账，专治「配置写了但代码没读」。"""
+    log("    你填的地址 : " + str(cfg.get("upstream", "")))
+    log("    注册表存   : " + upstream_base(cfg) + "   （原样，不改）")
+    log("    实际请求   : " + chat_url(cfg))
+    log("    模型表     : " + models_url(cfg))
+    log("    模型       : " + str(cfg.get("model", "")))
+    log("    密钥       : " + _mask(cfg.get("api_key")))
+    log("    窗口标题   : %s（写死，不可改）   汉化条目=%d" %
+        (WINDOW_TITLE, len(ui_items())))
 
 
 def probe_direct(cfg):
-    """接口自检：只读，不改 DLL / 注册表。
-    按 ProPilot 纯直连的真实拼法（baseUrl + /v1/chat/completions）探测中转站，
-    别人换自己的 URL / 密钥 / 模型后，点一下就知道能不能聊。"""
+    """接口自检：只读，不改 DLL / 注册表。按「地址 + /chat/completions」真实探测。"""
     errs = validate_cfg(cfg)
     if errs:
         for e in errs:
             log("[X] " + e)
         return 1
-    base = direct_base_url(cfg)
-    u = init_bridge(cfg)
-    chat_url = base + "/v1/chat/completions"
-    models_url = base + "/v1/models"
-    key = str(cfg["api_key"])
-    masked = "(空)" if not key else (key[:4] + "***" + key[-2:] if len(key) > 8 else "***")
+    cu, mu = chat_url(cfg), models_url(cfg)
+    key = str(cfg.get("api_key", ""))
 
-    log("=" * 74)
-    log("接口自检（只读，不改 DLL / 注册表 / 开机自启）")
-    log("  你填的上游      : " + str(cfg["upstream"]))
-    log("  直连根地址      : " + base)
-    log("  ProPilot 聊天   : " + chat_url)
-    log("  ProPilot 模型表 : " + models_url)
-    log("  模型 / 密钥     : %s / %s" % (u["model"], masked))
-
-    path_warn = False
-    raw_path = urllib.parse.urlsplit(str(cfg["upstream"])).path.rstrip("/")
-    if raw_path and not raw_path.endswith("/v1") and not raw_path.endswith("/chat/completions"):
-        path_warn = True
-        log("  [!] 上游路径不是 /v1：DLL 把 /v1/chat/completions 写死了，"
-            "纯直连会拼成 %s" % chat_url)
-        log("      若中转站要求别的路径，请用「兼容代理模式(手动)」")
+    log("=" * 70)
+    log("接口自检（只读，不改任何东西）")
+    log("  实际请求 : " + cu)
+    log("  模型表   : " + mu)
+    log("  模型/密钥: %s / %s" % (cfg.get("model"), _mask(key)))
 
     hdr = {"Authorization": "Bearer " + key,
            "Content-Type": "application/json",
            "Accept": "application/json",
            "Accept-Encoding": "identity",
-           "User-Agent": "ProPilotFix/1.0"}
+           "User-Agent": "ProPilotFix/2.0"}
 
     try:
-        req = urllib.request.Request(models_url, headers=hdr, method="GET")
-        t0 = time.time()
+        req = urllib.request.Request(mu, headers=hdr, method="GET")
         with urllib.request.urlopen(req, timeout=8) as r:
             raw = r.read()
             code = r.status
@@ -740,503 +747,81 @@ def probe_direct(cfg):
                    if isinstance(m, dict) and m.get("id")]
         except Exception:
             pass
-        log("  [1] 模型表 GET  : HTTP %d  模型数=%d  %.2fs" %
-            (code, len(ids), time.time() - t0))
-        if ids and u["model"] not in ids:
-            log("      [!] 模型表里没有 %s；下拉框已写死该模型，聊天仍可能可用" % u["model"])
+        log("  [1] 模型表 GET : HTTP %d  模型数=%d" % (code, len(ids)))
+        if ids and cfg.get("model") not in ids:
+            log("      [!] 模型表里没有 %s；已写死该模型，聊天仍可能可用" % cfg.get("model"))
     except Exception as e:
         code = getattr(e, "code", None)
-        if code in (401, 403):
-            log("  [1] 模型表 GET  : HTTP %s —— 认证失败，检查 API 密钥" % code)
-        elif code in (404, 405, 501):
-            log("  [1] 模型表 GET  : HTTP %s  中转站常屏蔽此端点，不影响聊天" % code)
-        else:
-            log("  [1] 模型表 GET  : %s" % ("HTTP %s" % code if code else repr(e)))
-            if not code:
-                log("      连不上：检查地址 / 网络 / 系统代理 / 证书")
+        log("  [1] 模型表 GET : %s" % (("HTTP %s" % code) if code else repr(e)))
 
-    body = json.dumps({"model": u["model"],
+    body = json.dumps({"model": cfg.get("model"),
                        "messages": [{"role": "user", "content": "hi"}],
                        "max_tokens": 16, "stream": False},
                       ensure_ascii=False).encode("utf-8")
     ok_chat = False
     try:
-        req = urllib.request.Request(chat_url, data=body, headers=hdr, method="POST")
-        t0 = time.time()
+        req = urllib.request.Request(cu, data=body, headers=hdr, method="POST")
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read()
             code = r.status
         txt = ""
         try:
             j = json.loads(raw)
-            txt = (j.get("choices") or [{}])[0].get("message", {}).get("content", "")
-            if not txt:
-                txt = str(j)[:120]
+            txt = (j.get("choices") or [{}])[0].get("message", {}).get("content", "") or str(j)[:100]
         except Exception:
-            txt = raw.decode("utf-8", "replace")[:120]
-        log("  [2] 聊天 POST   : HTTP %d  %.2fs  回复=%r" %
-            (code, time.time() - t0, txt[:80]))
+            txt = raw.decode("utf-8", "replace")[:100]
+        log("  [2] 聊天 POST  : HTTP %d  回复=%r" % (code, txt[:70]))
         ok_chat = True
     except Exception as e:
         code = getattr(e, "code", None)
         detail = ""
         try:
-            detail = e.read().decode("utf-8", "replace")[:180]
+            detail = e.read().decode("utf-8", "replace")[:160]
         except Exception:
             pass
-        log("  [2] 聊天 POST   : %s  %s" %
-            ("HTTP %s" % code if code else repr(e), detail))
+        log("  [2] 聊天 POST  : %s  %s" %
+            (("HTTP %s" % code) if code else repr(e), detail))
         if code in (401, 403):
-            log("      -> 401/403：API 密钥不对，或该中转站要额外请求头（纯直连做不到，用兼容代理）")
+            log("      -> 密钥不对，或该服务要额外请求头")
         elif code == 404:
-            log("      -> 404：路径不对。上游地址一般以 /v1 结尾；别的路径用兼容代理模式")
+            log("      -> 404：地址不对，一般要填到 /v1 为止")
         elif code == 400:
-            log("      -> 400：模型名或请求体不被接受，检查「模型名」是不是中转站给的那个")
+            log("      -> 400：模型名或请求体不被接受，检查模型名")
         elif code == 429:
             log("      -> 429：限流，密钥和地址是对的，稍后再试")
         elif code in (502, 503, 504):
-            log("      -> %s：网关/代理错误，检查网络或本机系统代理设置" % code)
+            log("      -> %s：网关/网络错误，检查网络或系统代理" % code)
 
-    verdict = ("聊天接口可用 —— 点「一键永久修复」，重开 Proteus 9 直接发消息"
-               if ok_chat else
-               "聊天接口不通 —— 按上面提示改配置；纯直连不行就用「兼容代理模式(手动)」")
-    if ok_chat and path_warn:
-        verdict += "；但路径非 /v1，若 Proteus 里报 404 请切「兼容代理模式(手动)」"
-    log("  结论: " + verdict)
-    log("=" * 74)
+    log("  结论: " + ("聊天接口可用 —— 点「一键永久修复」" if ok_chat
+                    else "聊天接口不通 —— 按上面提示改地址 / 密钥 / 模型"))
+    log("=" * 70)
     return 0 if ok_chat else 1
 
 
-def bridge_alive(port):
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:%d/__health" % port,
-                                    timeout=1) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
-def spawn_bridge():
-    """手动起独立无窗口代理进程。不写开机自启，重开机后需再点一次。
-    --dir 把工作目录钉在 DLL 侧，否则 serve 会去 exe 所在目录找配置、拿到空密钥。"""
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "serve", "--no-reg", "--dir", HERE]
-    else:
-        cmd = [sys.executable, os.path.abspath(__file__), "serve",
-               "--no-reg", "--dir", HERE]
-    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}  # CREATE_NO_WINDOW
-    try:
-        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             close_fds=True, **kw)
-        with open(BRIDGE_PID, "w", encoding="utf-8") as f:
-            f.write(str(p.pid))
-        return True, "后台代理已常驻 PID=%d（关掉本窗口也不会停）" % p.pid
-    except Exception as e:
-        return False, "后台代理启动失败：%r" % (e,)
-
-
-def stop_bridge():
-    """只结束本工具自己拉起的那个代理，不会误杀 GUI。"""
-    try:
-        pid = int(open(BRIDGE_PID, encoding="utf-8").read().strip())
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, creationflags=0x08000000)
-        else:
-            os.kill(pid, 15)
-        os.remove(BRIDGE_PID)
-        return True, "已停止后台代理 PID=%d" % pid
-    except FileNotFoundError:
-        return True, "没有本工具启动的后台代理"
-    except Exception as e:
-        return False, "停止后台代理失败：%r" % (e,)
-
-
-def validate_cfg(cfg):
-    """配置防呆：别人的上游 / 模型和本机不一定一样，填错就别写 DLL 和注册表。"""
-    errs = []
-    up = str(cfg.get("upstream", "")).strip()
-    if not up:
-        errs.append("上游地址不能为空")
-    else:
-        try:
-            if not urllib.parse.urlsplit(up).hostname:
-                errs.append("上游地址解析不出主机名：%r" % up)
-        except Exception as e:
-            errs.append("上游地址无法解析：%r" % (e,))
-    if not str(cfg.get("model", "")).strip():
-        errs.append("模型名不能为空")
-    try:
-        p = int(cfg.get("bridge_port", 0))
-        if not 1 <= p <= 65535:
-            errs.append("代理端口超出 1~65535")
-    except Exception:
-        errs.append("代理端口必须是数字")
-    return errs
-
-
-def cfg_report(cfg):
-    """把「实际生效」的配置打出来对账，专治「配置写了但代码没读」。"""
-    u = init_bridge(cfg)
-    k = u["api_key"]
-    masked = "(空)" if not k else (k[:4] + "***" + k[-2:] if len(k) > 8 else "***")
-    log("    上游      : " + u["upstream"])
-    log("    转发聊天  : %s:%s%s" % (u["host"], u["port"], u["chat"]))
-    log("    转发模型表: " + u["models"])
-    log("    模型      : " + u["model"])
-    log("    密钥      : %s   来源=%s" %
-        (masked, "透传客户端" if u["trust_client"] else "本工具配置"))
-    log("    代理端口  : %d   强制模型=%s   provider=%s" %
-        (u["listen"], u["force"], cfg.get("provider_id", 4)))
-    log("    直连根地址: " + direct_base_url(cfg))
-    log("    直连聊天  : " + direct_base_url(cfg) + "/v1/chat/completions")
-    log("    窗口标题  : %s（写死，不可改）   汉化条目=%d" %
-        (WINDOW_TITLE, len(ui_items())))
-    return u
-
-
-def min_body():
-    return json.dumps({"model": UP["model"],
-                       "messages": [{"role": "user", "content": "hi"}],
-                       "max_tokens": 16, "stream": False},
-                      ensure_ascii=False).encode("utf-8")
-
-
-def normalize(method, path, body):
-    p = path.split("?", 1)[0].rstrip("/") or "/"
-    modelish = ("/models", "/v1/models", "/api/tags")
-    if method in ("GET", "HEAD") and (p.endswith(modelish) or p == "/"):
-        return UP["models"], None
-    if p.endswith("/chat/completions"):
-        return UP["chat"], ensure_body(body)
-    if method in ("GET", "HEAD"):
-        return UP["models"], None
-    # 测试连接按钮会把 baseUrl 当完整 URL 直接 POST（POST /v1 -> 404）
-    return UP["chat"], ensure_body(body)
-
-
-def ensure_body(body):
-    fb = json.loads(min_body().decode("utf-8"))
-    if not body:
-        j = fb
-    else:
-        try:
-            j = json.loads(body.decode("utf-8"))
-        except Exception:
-            j = fb
-        if not isinstance(j, dict) or "messages" not in j:
-            j = fb
-    if UP["force"] or not j.get("model"):
-        j["model"] = UP["model"]
-    return json.dumps(j, ensure_ascii=False).encode("utf-8")
-
-
-def build_models_payload(raw):
-    ids = []
-    try:
-        up = json.loads(raw.decode("utf-8"))
-        ids = [m.get("id") for m in up.get("data", [])
-               if isinstance(m, dict) and m.get("id")]
-    except Exception:
-        pass
-    pool = [UP["model"]]
-    if UP["extra"] > 0:
-        pool += [x for x in ids if x != UP["model"]][:UP["extra"]]
-    chosen = []
-    for mid in pool:
-        if mid and mid not in chosen:
-            chosen.append(mid)
-    data = [{"id": m, "object": "model", "created": 0, "owned_by": "custom"} for m in chosen]
-    models = [{"name": m, "model": m, "modified_at": "", "size": 0,
-               "digest": "", "details": {"family": "custom"}} for m in chosen]
-    return json.dumps({"object": "list", "data": data, "models": models},
-                      ensure_ascii=False).encode("utf-8")
-
-
-class BridgeServer(ThreadingHTTPServer):
-    # Windows 下 allow_reuse_address=True 会让两个进程同时 LISTEN 同一端口，
-    # 请求随机分流、日志分裂。关掉后第二个实例 bind 直接失败。
-    allow_reuse_address = False
-    daemon_threads = True
-
-
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-    server_version = "ProPilotFix/1.0"
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def _handle(self, method):
-        t0 = time.time()
-        length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length) if length else b""
-        src = self.path
-        dst, fwd = normalize(method, src, body)
-
-        def _m(raw):
-            if not raw:
-                return "-"
-            try:
-                return str(json.loads(raw).get("model", "-"))
-            except Exception:
-                return "-"
-
-        src_m, fwd_m = _m(body), _m(fwd)
-        note = ("%s=>%s" % (src_m, fwd_m)) if src_m != fwd_m else fwd_m
-
-        if src.split("?", 1)[0] in ("/__health", "/__ping"):
-            raw = json.dumps({"ok": True, "upstream": UP["upstream"],
-                              "chat": UP["chat"], "model": UP["model"],
-                              "listen_port": UP["listen"]},
-                             ensure_ascii=False).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
-            log("HEALTH -> 200")
-            return
-
-        # 密钥以配置为准：ProPilot 注册表里可能残留上一次（或别人）的旧密钥，
-        # 直接透传会导致「界面改成自己的接口，请求却仍带旧密钥」-> 401。
-        cli_auth = self.headers.get("Authorization")
-        if UP.get("trust_client") and cli_auth:
-            auth = cli_auth
-        else:
-            auth = ("Bearer " + UP["api_key"]) if UP["api_key"] else ""
-        hdrs = {
-            "Content-Type": self.headers.get("Content-Type") or "application/json",
-            "Accept": self.headers.get("Accept") or "*/*",
-            "Accept-Encoding": "identity",
-        }
-        if auth:
-            hdrs["Authorization"] = auth
-        try:
-            cls = http.client.HTTPSConnection if UP["https"] else http.client.HTTPConnection
-            conn = cls(UP["host"], UP["port"], timeout=180)
-            conn.request(method, dst,
-                         body=fwd if method not in ("GET", "HEAD") else None, headers=hdrs)
-            resp = conn.getresponse()
-            status = resp.status
-            ctype = resp.getheader("Content-Type") or "application/json"
-            self.send_response(status)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "close")
-
-            if "event-stream" in ctype.lower():
-                self.end_headers()
-                total = 0
-                while True:
-                    chunk = resp.read1(2048)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
-                    total += len(chunk)
-                self.close_connection = True
-                conn.close()
-                log("%-6s %-24s -> %-26s %s  model=%s  SSE %dB  %.2fs" %
-                    (method, src, dst, status, note, total, time.time() - t0))
-                return
-
-            raw = resp.read()
-            conn.close()
-            if status >= 400:
-                log("      [上游错误] " + raw[:220].decode("utf-8", "replace"))
-            extra = ""
-            if (method in ("GET", "HEAD") and dst == UP["models"]
-                    and 200 <= status < 300):
-                try:
-                    raw = build_models_payload(raw)
-                    extra = "  模型表=双格式 首项=%s" % UP["model"]
-                except Exception as e:
-                    extra = "  模型表改造失败 %r" % (e,)
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            if method != "HEAD":
-                self.wfile.write(raw)
-            self.close_connection = True
-            log("%-6s %-24s -> %-26s %s  model=%s  %dB  %.2fs%s" %
-                (method, src, dst, status, note, len(raw), time.time() - t0, extra))
-        except Exception as e:
-            raw = json.dumps({"error": {"message": "桥接上游失败: %r" % (e,),
-                                        "type": "bridge_error"}},
-                             ensure_ascii=False).encode("utf-8")
-            try:
-                self.send_response(502)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(raw)))
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.wfile.write(raw)
-            except Exception:
-                pass
-            log("%-6s %-24s -> %-26s 502  ERR %r" % (method, src, dst, e))
-
-    def do_GET(self):
-        self._handle("GET")
-
-    def do_HEAD(self):
-        self._handle("HEAD")
-
-    def do_POST(self):
-        self._handle("POST")
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-
-def selftest(cfg):
-    init_bridge(cfg)
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    port = srv.server_address[1]
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    base = "http://127.0.0.1:%d" % port
-    hdr = {"Content-Type": "application/json",
-           "Authorization": "Bearer " + UP["api_key"]}
-
-    def hit(method, path, body=None):
-        data = body.encode("utf-8") if isinstance(body, str) else body
-        # 空 body 的 POST 必须真的发 POST，不能让 urllib 退化成 GET
-        req = urllib.request.Request(base + path, data=data, headers=hdr, method=method)
-        t0 = time.time()
-        try:
-            with urllib.request.urlopen(req, timeout=60) as r:
-                return r.status, r.read(), time.time() - t0
-        except urllib.error.HTTPError as e:
-            return e.code, e.read(), time.time() - t0
-        except Exception as e:
-            return -1, str(e).encode("utf-8"), time.time() - t0
-
-    chat = json.dumps({"model": UP["model"],
-                       "messages": [{"role": "user", "content": "只回复两个字：正常"}],
-                       "max_tokens": 32, "stream": False})
-    sse = json.dumps({"model": UP["model"],
-                      "messages": [{"role": "user", "content": "hi"}],
-                      "max_tokens": 16, "stream": True})
-    hard = json.dumps({"model": "gpt-4o",
-                       "messages": [{"role": "user", "content": "hi"}],
-                       "max_tokens": 16, "stream": False})
-    cases = [
-        ("GET  模型表 /v1/models", "GET", "/v1/models", None),
-        ("GET  模型表 /models", "GET", "/models", None),
-        ("GET  模型表 /api/tags", "GET", "/api/tags", None),
-        ("POST 正常聊天", "POST", UP["chat"], chat),
-        ("POST 根地址(测试连接)", "POST", "/", None),
-        ("POST /v1(测试连接)", "POST", "/v1", None),
-        ("POST /v1 带脏 body", "POST", "/v1", '{"foo":"bar"}'),
-        ("POST 硬编码 gpt-4o", "POST", "/", hard),
-        ("POST gpt-4o-mini", "POST", UP["chat"],
-         hard.replace("gpt-4o", "gpt-4o-mini")),
-        ("POST /v1/models", "POST", "/v1/models", chat),
-        ("POST tools 格式", "POST", UP["chat"],
-         json.dumps({"model": UP["model"], "messages": [{"role": "user", "content": "列出元件"}],
-                     "max_tokens": 64, "stream": False,
-                     "tools": [{"type": "function", "function": {
-                         "name": "schematic_get_components",
-                         "description": "List components",
-                         "parameters": {"type": "object", "properties": {}}}}]})),
-        ("POST SSE 流式", "POST", UP["chat"], sse),
-        ("GET  健康检查", "GET", "/__health", None),
-    ]
-    log("=" * 78)
-    log("端到端自测  上游=%s  模型=%s" % (UP["upstream"], UP["model"]))
-    log("=" * 78)
-    ok = 0
-    for name, method, path, body in cases:
-        code, raw, dt = hit(method, path, body)
-        extra = ""
-        try:
-            j = json.loads(raw)
-            if "choices" in j:
-                msg = j["choices"][0]["message"]
-                tc = msg.get("tool_calls")
-                tail = ("tool_calls=" + str(tc[0]["function"]["name"])) if tc \
-                    else ("回复=" + str(msg.get("content"))[:20])
-                extra = "响应model=%s  %s" % (j.get("model", "?"), tail)
-            elif "data" in j:
-                extra = "模型数=%d 双格式=%s 首项=%s" % (
-                    len(j["data"]), "models" in j,
-                    j["data"][0]["id"] if j["data"] else "-")
-            elif "error" in j:
-                extra = str(j["error"])[:60]
-        except Exception:
-            extra = ("SSE 流=%dB" % len(raw)) if b"data:" in raw \
-                else raw[:60].decode("utf-8", "replace")
-        good = 200 <= code < 300
-        if good and method == "GET" and path in ("/v1/models", "/models", "/api/tags"):
-            try:
-                j = json.loads(raw)
-                good = bool(j.get("data") and j["data"][0].get("id") == UP["model"]
-                            and j.get("models") and j["models"][0].get("name") == UP["model"])
-            except Exception:
-                good = False
-        ok += 1 if good else 0
-        log("  [%s] %-22s %-28s HTTP %-4s %.2fs  %s" %
-            ("OK" if good else "XX", name, path, code, dt, extra))
-    log("-" * 78)
-    log("  结果 %d/%d %s" % (ok, len(cases), "全部通过" if ok == len(cases) else
-                            "存在失败项：检查上游服务是否已启动、密钥与模型名是否正确"))
-    srv.shutdown()
-    return 0 if ok == len(cases) else 1
-
-
-def serve(cfg):
-    init_bridge(cfg)
-    port = UP["listen"]
-    log("=" * 74)
-    log("ProPilot 兼容代理  127.0.0.1:%d  ->  %s" % (port, UP["upstream"]))
-    log("ProPilot 设置里「接口根地址」填： http://127.0.0.1:%d  （不要带 /v1）" % port)
-    log("此窗口请保持开着；关掉窗口 = 代理停止")
-    log("=" * 74)
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:%d/__health" % port, timeout=1) as r:
-            if r.status == 200:
-                log("[!] 端口 %d 上已有代理在运行，本次不重复启动。" % port)
-                return 0
-    except Exception:
-        pass
-    try:
-        srv = BridgeServer(("127.0.0.1", port), Handler)
-    except OSError as e:
-        log("[X] 端口 %d 绑定失败: %r" % (port, e))
-        return 1
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        log("已停止")
-    finally:
-        srv.server_close()
-    return 0
-
-
 def probe_upstream(cfg):
-    init_bridge(cfg)
+    """修复后快速看一眼上游通不通（只探测，不阻断修复）。"""
     try:
-        cls = http.client.HTTPSConnection if UP["https"] else http.client.HTTPConnection
-        c = cls(UP["host"], UP["port"], timeout=8)
-        c.request("GET", UP["models"],
-                  headers={"Authorization": "Bearer " + UP["api_key"],
-                           "Accept-Encoding": "identity"})
-        r = c.getresponse()
-        raw = r.read()
-        c.close()
-        ids = [m.get("id") for m in json.loads(raw).get("data", [])] if r.status == 200 else []
-        hit = UP["model"] in ids
-        log("    上游探测: HTTP %s  模型数=%d  目标模型存在=%s" % (r.status, len(ids), hit))
-        if not hit and ids:
-            log("    [!] 上游模型表里没有 %s，代理会强制纠正 model，一般仍可用" % UP["model"])
-        return r.status == 200
+        req = urllib.request.Request(
+            models_url(cfg),
+            headers={"Authorization": "Bearer " + str(cfg.get("api_key", "")),
+                     "Accept-Encoding": "identity"},
+            method="GET")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            raw = r.read()
+            code = r.status
+        ids = []
+        try:
+            ids = [m.get("id") for m in json.loads(raw).get("data", [])]
+        except Exception:
+            pass
+        log("    上游探测: HTTP %s  模型数=%d  目标模型存在=%s" %
+            (code, len(ids), cfg.get("model") in ids))
+        return code == 200
     except Exception as e:
-        log("    [!] 上游暂时连不上: %r" % (e,))
-        log("        DLL 和注册表已永久写好，等服务起来直接开 Proteus 9 就能聊（不用启动本工具）")
+        code = getattr(e, "code", None)
+        log("    [!] 上游暂时连不上: %s（地址/密钥/服务是否在跑）" %
+            (("HTTP %s" % code) if code else repr(e)))
+        log("        DLL 和注册表已永久写好，等服务起来直接开 Proteus 9 就能聊")
         return False
 
 
@@ -1270,6 +855,8 @@ def cmd_check(cfg):
     log("  汉化    : 中文 %d / 仍英文 %d / 共 %d 条（含主窗口标题）" % (zh, en, len(items)))
     log("  主标题  : %r" % d[TITLE_FO:TITLE_FO + 64].split(b"\0")[0]
         .decode("utf-8", "replace"))
+    log("  Custom 后缀: 聊天 %s / 模型表 %s   （应为 /chat/completions 与 /models）" %
+        (custom_chat_suffix(d), custom_models_suffix(d)))
 
     secs = pe_sections(d)
     lea_va, sec = o2v(secs, LEA_FO)
@@ -1277,7 +864,7 @@ def cmd_check(cfg):
         disp = struct.unpack_from("<i", d, LEA_FO + 3)[0]
         log("  模型首项: %r  %s" %
             (cstr(d, secs, lea_va + 7 + disp),
-             "(已是目标)" if cstr(d, secs, lea_va + 7 + disp) == cfg["model"] else "(仍是 gpt-4o)"))
+             "(已是目标)" if cstr(d, secs, lea_va + 7 + disp) == cfg["model"] else "(仍是旧值)"))
     else:
         log("  模型首项: [!] LEA 指令不匹配，模型补丁会跳过")
 
@@ -1288,16 +875,16 @@ def cmd_check(cfg):
     if winreg:
         try:
             log("  注册表  : activeProvider=%s" % reg_get(LC, "activeProvider")[0])
-            for pid in (1, 3, 4):
-                p = LC + (r"\Providers\%d" % pid)
-                log("            [%d] baseUrl=%s  model=%s" %
-                    (pid, reg_get(p, "baseUrl")[0], reg_get(p, "model")[0]))
+            p = LC + (r"\Providers\%d" % int(cfg.get("provider_id", 4)))
+            log("            [%d] baseUrl=%s  model=%s" %
+                (int(cfg.get("provider_id", 4)),
+                 reg_get(p, "baseUrl")[0], reg_get(p, "model")[0]))
         except Exception as e:
             log("  [!] 注册表读取失败: %r" % (e,))
     return 0
 
 
-def cmd_fix(cfg, no_reg=False, direct=True):
+def cmd_fix(cfg, no_reg=False):
     log("=" * 74)
     log(TOOL + " 一键修复  " + time.strftime("%Y-%m-%d %H:%M:%S"))
     log("=" * 74)
@@ -1306,26 +893,23 @@ def cmd_fix(cfg, no_reg=False, direct=True):
         log("    请在界面上重新选择 ProPilot.dll 所在文件夹，或把本工具放进该目录")
         return 1
 
-    # 0) 配置防呆 + 生效值回显：界面改了这里必须跟着变，否则就是「写了没读」
     errs = validate_cfg(cfg)
     if errs:
         for e in errs:
             log("[X] 配置错误：" + e)
-        log("    请在界面上改好上游 / 模型 / 端口再点修复（DLL 未改动）")
+        log("    请在界面上改好地址 / 模型再点修复（DLL 未改动）")
         return 1
     log("[0] 生效配置（对账用）")
     cfg_report(cfg)
 
-    # 0b) 可写性检查：Proteus 在跑时 DLL 被占用，且退出时会把旧值写回注册表
     try:
         with open(DLL, "r+b"):
             pass
     except Exception as e:
         log("[X] ProPilot.dll 不可写：%r" % (e,))
-        log("    请先【完全退出 Proteus 9】，或右键 FIX.bat 选「以管理员身份运行」")
+        log("    请先【完全退出 Proteus 9】，或右键本程序选「以管理员身份运行」")
         return 1
 
-    # 1) 统一备份：优先复用旧脚本留下的原版备份，保证 rollback 能回到真原版
     if not os.path.isfile(ORIG):
         src = DLL
         if os.path.isfile(OLD_BAK) and sha256(OLD_BAK) == ORIG_SHA:
@@ -1349,11 +933,19 @@ def cmd_fix(cfg, no_reg=False, direct=True):
     else:
         log("[2] 跳过注册表备份（--no-reg 或非 Windows）")
 
-    # 3) 读 DLL -> 全部改动先在内存里做完并校验，再一次性落盘
     data = bytearray(open(DLL, "rb").read())
     before = bytes(data)
+
+    ep_ok, ep_notes = patch_endpoint(data)
+    if ep_ok:
+        log("[3] 地址后缀补丁：改 %d 处（Custom 只拼 /chat/completions）" % ep_ok)
+        for n in ep_notes:
+            log("      " + n)
+    else:
+        log("[3] 地址后缀已是 /chat/completions（补丁已在）")
+
     ui_ok, ui_skip, ui_bad, notes = patch_ui(data)
-    log("[3] 汉化（含主窗口标题）：新增 %d 条，已是中文 %d 条，跳过 %d 条" %
+    log("[4] 汉化（含主窗口标题）：新增 %d 条，已是中文 %d 条，跳过 %d 条" %
         (ui_ok, ui_skip, ui_bad))
     for n in notes[:8]:
         log("      " + n)
@@ -1361,7 +953,7 @@ def cmd_fix(cfg, no_reg=False, direct=True):
         log("      ... 另有 %d 条" % (len(notes) - 8))
 
     md_ok, md_msg = patch_model(data, cfg["model"])
-    log("[4] 模型下拉框：" + md_msg)
+    log("[5] 模型下拉框：" + md_msg)
     if md_ok < 0:
         log("[X] 模型补丁校验失败，已中止（DLL 未改动）")
         return 1
@@ -1372,7 +964,7 @@ def cmd_fix(cfg, no_reg=False, direct=True):
         a, b = open(ORIG, "rb").read(), open(DLL, "rb").read()
         runs, bad_code = diff_report(a, b)
         nbytes = sum(e - s for s, e in runs)
-        log("[5] 落盘校验：长度一致=%s  差异区间=%d  改动字节=%d (%.4f%%)" %
+        log("[6] 落盘校验：长度一致=%s  差异区间=%d  改动字节=%d (%.4f%%)" %
             (len(a) == len(b), len(runs), nbytes, 100.0 * nbytes / len(a)))
         log("    PE 头/节表未改=%s   .text 越界改动=%s" %
             (a[:0x400] == b[:0x400], bool(bad_code)))
@@ -1386,34 +978,24 @@ def cmd_fix(cfg, no_reg=False, direct=True):
             shutil.copy2(ORIG, DLL)
             return 1
     else:
-        log("[5] DLL 无需改动（补丁已在）")
+        log("[6] DLL 无需改动（补丁已在）")
 
-    # 6) 注册表
     if not no_reg and winreg:
-        log("[6] 修注册表")
-        reg_fix(cfg, direct=direct)
+        log("[7] 写注册表")
+        reg_fix(cfg)
     else:
-        log("[6] 跳过注册表修复")
+        log("[7] 跳过注册表写入")
 
-    # 7) 上游探测
-    log("[7] 上游连通性")
+    log("[8] 上游连通性")
     probe_upstream(cfg)
 
     log("")
-    if direct:
-        log("修复完成【纯直连 · 只聊天 · 零插件】")
-        log("  接口根地址已写成上游真实地址：%s" % direct_base_url(cfg))
-        log("  聊天 /v1/chat/completions、模型表 /v1/models 由 ProPilot 自己拼")
-        log("  只要上游服务在跑，开机直接开 Proteus 9 就能聊，不用启动任何工具")
-        log("  注意：「测试连接」按钮会失败（它把根地址当完整 URL POST）——不用点它")
-        log("  老上游不兼容时，点「兼容代理模式」手动起一次代理（不自启）")
-    else:
-        log("修复完成【兼容代理 · 手动，不开机自启】")
-        log("  1) 代理是独立无窗口进程，关掉本工具也不停；但不会开机自启，重开机要再点一次")
-        log("  2) 完全退出 Proteus 9 再重开 —— 不重启不会加载新 DLL / 新配置")
-        log("  3) 设置里确认「接口根地址」= http://127.0.0.1:%d ，点「测试连接」" %
-            int(cfg["bridge_port"]))
-        log("  验收看日志里的  model=gpt-4o=>%s  与  模型表=双格式" % cfg["model"])
+    log("修复完成【只聊天 · 一条路 · 零插件零自启】")
+    log("  你填的地址   : %s" % cfg.get("upstream"))
+    log("  注册表原样存 : %s" % upstream_base(cfg))
+    log("  ProPilot 请求 : %s" % chat_url(cfg))
+    log("  只要上游服务在跑，开机直接开 Proteus 9 就能聊，不用启动任何工具")
+    log("  ★ 不要点设置里的「测试连接」——它把根地址当完整 URL POST，必失败，但不影响聊天")
     log("  改坏了：在界面点「一键还原」/ rollback 命令")
     return 0
 
@@ -1422,11 +1004,6 @@ def cmd_rollback(no_reg=False):
     log("=" * 74)
     log("回滚  " + time.strftime("%Y-%m-%d %H:%M:%S"))
     log("=" * 74)
-    try:
-        _, msg = stop_bridge()
-        log("[0] " + msg)
-    except Exception as e:
-        log("[!] 停止后台代理时出错：%r" % (e,))
     if os.path.isfile(ORIG):
         shutil.copy2(ORIG, DLL)
         log("[1] DLL 已还原  SHA=" + sha256(DLL))
@@ -1440,7 +1017,6 @@ def cmd_rollback(no_reg=False):
             log("[2] 注册表还原失败: %r" % (e,))
     else:
         log("[2] 无注册表备份或已跳过")
-    log("[i] 已停止本工具起的代理；ProPilot 接口根地址已随注册表一并还原")
     return 0
 
 
@@ -1448,7 +1024,6 @@ def main():
     args = sys.argv[1:]
     no_reg = "--no-reg" in args
     args = [a for a in args if a != "--no-reg"]
-    # 独立 serve 进程靠 --dir 把工作目录钉在 DLL 侧，否则会去 exe 目录读配置
     if "--dir" in args:
         i = args.index("--dir")
         if i + 1 < len(args):
@@ -1459,12 +1034,7 @@ def main():
     cmd = (args[0] if args else "fix").lower()
     log("\n### %s  %s  %s ###" % (TOOL, cmd, time.strftime("%Y-%m-%d %H:%M:%S")))
 
-    # 只在双击 FIX.bat（fix）或直接 serve 且是交互终端时问配置，
-    # 避免脚本化调用 / 沙箱自测卡在 input() 上
-    interactive = (not no_reg) and sys.stdin.isatty() and cmd in ("fix", "serve")
-    if cmd in ("serve", "test"):
-        cfg = load_cfg(interactive=interactive)
-        return serve(cfg) if cmd == "serve" else selftest(cfg)
+    interactive = (not no_reg) and sys.stdin.isatty() and cmd == "fix"
     if cmd == "rollback":
         return cmd_rollback(no_reg)
     cfg = load_cfg(interactive=interactive)
@@ -1487,11 +1057,11 @@ def main():
             log("[X] 仅 Windows 支持")
             return 1
         reg_backup()
-        log("只修注册表模型值与接口根地址")
+        log("只写注册表（接口地址 / 模型 / 密钥）")
         reg_fix(cfg)
         return 0
     log("未知命令: " + cmd)
-    log("可用: fix / probe / serve / check / cfgcheck / test / fixreg / rollback")
+    log("可用: fix / probe / check / cfgcheck / fixreg / rollback")
     return 2
 
 

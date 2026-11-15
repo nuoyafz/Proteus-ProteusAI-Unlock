@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-ProPilot 9 一键修复 · ProPilotFix   —— 图形界面版
+ProPilot 一键修复 · ProPilotFix   —— 图形界面版（只聊天 · 一条路）
 
-默认「纯直连」：改 DLL + 注册表后，ProPilot 直接请求你自己的上游，
-零常驻进程、零开机自启，重开 Proteus 9 就能聊（只聊天）。
+思路很简单：地址 / 密钥 / 模型 三项填好，点一次「一键永久修复」。
+工具改 DLL（汉化 + 主窗口标题 + 模型首项 + 地址后缀 /chat/completions）
+并原样写注册表，之后 ProPilot 直接请求你自己的上游，零进程零自启。
+
+★ 地址填到 /v1 为止（例如 http://127.0.0.1:8000/v1）。
+  工具不会剥 /v1、不会帮你猜、不会改你填的地址。
+
 工具不必放到 ProPilot.dll 同目录：放桌面、微信下载目录、U 盘都行，
 启动后自动搜索 DLL（卸载表 → 常见路径 → 全盘限时扫描），找不到可手选。
 
-双击：图形界面（推荐）
 命令行 / 无人值守：
-  ProPilotFix.exe --auto                       自动搜索并修复（纯直连）
+  ProPilotFix.exe --auto                       自动搜索并修复
   ProPilotFix.exe --auto --no-reg              跳过注册表（沙箱自测）
   ProPilotFix.exe --auto --dir D:/x/Bin        直接指定 DLL 目录
   ProPilotFix.exe --find                       只列出找到的 DLL 目录
@@ -105,7 +109,6 @@ def _arg(name):
 
 # ==========================================================================
 #  自动定位 ProPilot.dll
-#  顺序：工具目录 -> 注册表卸载项 -> 常见安装位置 -> 全盘限时扫描
 # ==========================================================================
 _SKIP = {
     "windows", "programdata", "$recycle.bin", "system volume information",
@@ -131,7 +134,6 @@ def _add_dir(d, hits, seen):
 
 
 def _reg_install_dirs():
-    """从卸载项里找 Labcenter / Proteus 的安装位置，比扫盘快得多也准得多。"""
     out = []
     w = P.winreg
     if not w:
@@ -222,7 +224,6 @@ def find_dll_dirs(timeout=20, progress=None):
     if hits:
         return hits
 
-    # 注册表没装信息才扫盘；限时 + 剪枝，避免卡死
     for letter in string.ascii_uppercase:
         root = letter + ":\\"
         if not os.path.isdir(root):
@@ -288,11 +289,10 @@ def _btn(parent, text, cmd, primary=False, width=None):
 class App(object):
     def __init__(self, root):
         self.root = root
-        self.bridge_started = False
         self.busy = False
         root.title(TITLE)
-        root.geometry("880x740")
-        root.minsize(780, 640)
+        root.geometry("840x660")
+        root.minsize(760, 580)
         root.configure(bg=BG)
 
         self.dir_var = tk.StringVar(value="")
@@ -301,11 +301,6 @@ class App(object):
         self.up_var = tk.StringVar(value=P.DEFAULT_CFG["upstream"])
         self.key_var = tk.StringVar(value=P.DEFAULT_CFG["api_key"])
         self.model_var = tk.StringVar(value=P.DEFAULT_CFG["model"])
-        self.port_var = tk.StringVar(value=str(P.DEFAULT_CFG["bridge_port"]))
-        self.pid_var = tk.StringVar(value=str(P.DEFAULT_CFG["provider_id"]))
-        self.extra_var = tk.StringVar(value=str(P.DEFAULT_CFG["extra_models"]))
-        self.force_var = tk.BooleanVar(value=bool(P.DEFAULT_CFG["force_model"]))
-        self.trust_var = tk.BooleanVar(value=bool(P.DEFAULT_CFG["trust_client_key"]))
         self.effective_var = tk.StringVar(value="")
         self.cfg_tip_var = tk.StringVar(value="")
 
@@ -336,7 +331,7 @@ class App(object):
         left.pack(side="left", padx=18, pady=10)
         tk.Label(left, text="ProPilot 一键修复", bg=ACCENT, fg="#ffffff",
                  font=FONT_BIG, anchor="w").pack(anchor="w")
-        tk.Label(left, text="ProPilotFix   ·   放在任意文件夹都能自动找到 DLL",
+        tk.Label(left, text="只聊天 · 你填什么就是什么 · 零进程零自启",
                  bg=ACCENT, fg="#d6e6ff", font=FONT_SM, anchor="w").pack(anchor="w", pady=(2, 0))
         right = tk.Frame(h, bg=ACCENT)
         right.pack(side="right", padx=16)
@@ -377,78 +372,52 @@ class App(object):
         self.cb_var = tk.StringVar()
         self.cb = tk.OptionMenu(row2, self.cb_var, "")
         self.cb.configure(font=FONT_SM, bg="#f8fafc", relief="solid", bd=1,
-                          anchor="w", width=46)
+                          anchor="w", width=44)
         self.cb.pack(side="right", padx=(8, 0))
         self.cb_var.trace("w", self._on_pick)
 
     def _build_cfg(self, parent):
-        c = self._card(parent, "② 接口配置（用别人的中转站：URL / 密钥 / 模型 三项都要改成他自己的）")
+        c = self._card(parent, "② 接口（用别人的中转站：三项都填他自己的）")
         grid = tk.Frame(c, bg=CARD)
         grid.pack(fill="x")
-        items = [
-            ("上游地址", self.up_var, 52),
-            ("API 密钥", self.key_var, 52),
-            ("模型名", self.model_var, 30),
-            ("代理端口", self.port_var, 10),
+        rows = [
+            ("接口地址", self.up_var, 56),
+            ("API 密钥", self.key_var, 56),
+            ("模型名", self.model_var, 34),
         ]
-        self.cfg_entries = []
-        for i, (lab, var, w) in enumerate(items):
-            r, col = divmod(i, 2)
+        for lab, var, w in rows:
             cell = tk.Frame(grid, bg=CARD)
-            cell.grid(row=r, column=col, sticky="w", padx=(0, 18), pady=3)
+            cell.pack(fill="x", pady=3)
             tk.Label(cell, text=lab, bg=CARD, fg=TEXT, font=FONT,
-                     width=9, anchor="w").pack(side="left")
-            e = tk.Entry(cell, textvariable=var, font=FONT, width=w,
-                         relief="solid", bd=1, bg="#f8fafc")
-            e.pack(side="left", ipady=4)
-            self.cfg_entries.append(e)
+                     width=8, anchor="w").pack(side="left")
+            tk.Entry(cell, textvariable=var, font=FONT, width=w,
+                     relief="solid", bd=1, bg="#f8fafc").pack(side="left", ipady=4)
 
-        opt = tk.Frame(c, bg=CARD)
-        opt.pack(fill="x", pady=(7, 0))
-        tk.Checkbutton(opt, text="强制纠正模型", variable=self.force_var, bg=CARD,
-                       fg=TEXT, font=FONT_SM, activebackground=CARD,
-                       selectcolor="#ffffff").pack(side="left")
-        tk.Checkbutton(opt, text="透传客户端密钥(一般别勾)", variable=self.trust_var,
-                       bg=CARD, fg=TEXT, font=FONT_SM, activebackground=CARD,
-                       selectcolor="#ffffff").pack(side="left", padx=(14, 0))
-        tk.Label(opt, text="额外模型数", bg=CARD, fg=TEXT,
-                 font=FONT_SM).pack(side="left", padx=(14, 0))
-        tk.Entry(opt, textvariable=self.extra_var, font=FONT_SM, width=5,
-                 relief="solid", bd=1, bg="#f8fafc").pack(side="left", padx=4)
-        tk.Label(opt, text="服务商槽", bg=CARD, fg=TEXT,
-                 font=FONT_SM).pack(side="left", padx=(14, 0))
-        tk.Entry(opt, textvariable=self.pid_var, font=FONT_SM, width=4,
-                 relief="solid", bd=1, bg="#f8fafc").pack(side="left", padx=4)
-
+        tk.Label(c, text="地址填到 /v1 为止（例：http://127.0.0.1:8000/v1）。"
+                         "本地服务不需要密钥就留空。",
+                 bg=CARD, fg=MUTED, font=FONT_SM, anchor="w").pack(fill="x", pady=(7, 0))
         tk.Label(c, textvariable=self.cfg_tip_var, bg=CARD, fg=WARN,
-                 font=FONT_SM, anchor="w", wraplength=800,
-                 justify="left").pack(fill="x", pady=(8, 0))
+                 font=FONT_SM, anchor="w", wraplength=780,
+                 justify="left").pack(fill="x", pady=(3, 0))
         tk.Label(c, textvariable=self.effective_var, bg=CARD, fg=OK,
-                 font=FONT_SM, anchor="w", wraplength=800,
+                 font=FONT_SM, anchor="w", wraplength=780,
                  justify="left").pack(fill="x", pady=(3, 0))
         probe_row = tk.Frame(c, bg=CARD)
         probe_row.pack(fill="x", pady=(6, 0))
-        tk.Label(probe_row,
-                 text="换成别人的中转站 / 云 API 后，先测一下能不能聊（不发任何修改）",
+        tk.Label(probe_row, text="换自己的接口后，先测一下能不能聊（不发任何修改）",
                  bg=CARD, fg=MUTED, font=FONT_SM).pack(side="left")
         _btn(probe_row, "● 接口自检", self.on_probe).pack(side="right")
-        for v in (self.up_var, self.key_var, self.model_var, self.port_var,
-                  self.pid_var, self.extra_var,
-                  self.force_var, self.trust_var):
+        for v in (self.up_var, self.key_var, self.model_var):
             v.trace("w", self._refresh_effective)
         self._refresh_effective()
 
     def _refresh_effective(self, *a):
-        """实时回显「实际生效」的转发目标，专治配置写了却没被读。"""
+        """实时回显「实际生效」的请求地址，专治配置写了却没被读。"""
         try:
-            cfg = self.collect_cfg(quiet=True)
-            u = P.init_bridge(cfg)
-            base = P.direct_base_url(cfg)
+            cfg = self.collect_cfg()
             self.effective_var.set(
-                "直连 → %s/v1/chat/completions  |  模型 %s  |  密钥来源 %s  |  标题 %s" %
-                (base, u["model"],
-                 "透传客户端" if u["trust_client"] else "本工具配置",
-                 P.WINDOW_TITLE))
+                "ProPilot 将请求 → %s   |   模型 %s   |   标题 %s" %
+                (P.chat_url(cfg), cfg.get("model") or "(未填)", P.WINDOW_TITLE))
         except Exception as e:
             self.effective_var.set("配置未就绪：%r" % (e,))
 
@@ -458,22 +427,18 @@ class App(object):
         top.pack(fill="x")
         self.main_btn = _btn(top, "★  一键永久修复", self.on_fix, primary=True)
         self.main_btn.pack(side="left", ipadx=18)
-        tk.Label(top, text="改 DLL + 汉化 + 注册表 · 纯直连零插件 · 无需开机自启", bg=CARD,
+        tk.Label(top, text="改 DLL + 汉化 + 地址后缀 + 注册表 · 只聊天 · 无需开机自启", bg=CARD,
                  fg=MUTED, font=FONT_SM).pack(side="left", padx=12)
 
         self.minor = []
         items = (
-            ("兼容代理模式(手动)", self.on_compat),
             ("只读体检", self.on_check),
-            ("配置自检", self.on_cfgcheck),
-            ("端到端自测", self.on_test),
             ("一键还原", self.on_rollback),
             ("打开所在文件夹", self.on_open),
         )
-        for i, (text, cmd) in enumerate(items):
-            if i % 3 == 0:
-                row = tk.Frame(c, bg=CARD)
-                row.pack(fill="x", pady=(10 if i == 0 else 2, 0))
+        row = tk.Frame(c, bg=CARD)
+        row.pack(fill="x", pady=(10, 0))
+        for text, cmd in items:
             b = _btn(row, text, cmd)
             b.pack(side="left", padx=(0, 7), pady=2)
             self.minor.append(b)
@@ -482,7 +447,7 @@ class App(object):
         c = self._card(parent, "运行日志（自动保存到 ProPilotFix.log）")
         c.pack_propagate(True)
         self.txt = scrolledtext.ScrolledText(
-            c, height=11, font=("Consolas", 9), bg="#f8fafc", fg="#334155",
+            c, height=10, font=("Consolas", 9), bg="#f8fafc", fg="#334155",
             relief="solid", bd=1, wrap="word")
         self.txt.pack(fill="both", expand=True)
         self.txt.insert("end", "准备就绪。正在自动搜索 ProPilot.dll …\n")
@@ -532,7 +497,7 @@ class App(object):
         self.cb_var.set(dirs[0])
         self.dir_var.set(dirs[0])
         self._load_cfg(dirs[0])
-        self.status_var.set("已定位 DLL · 填好上游/密钥/模型后点「★ 一键永久修复」")
+        self.status_var.set("已定位 DLL · 填好地址/密钥/模型后点「★ 一键永久修复」")
 
     def _on_pick(self, *a):
         d = self.cb_var.get()
@@ -550,18 +515,13 @@ class App(object):
                     cfg.update(json.load(f))
             except Exception:
                 pass
-        self.up_var.set(cfg["upstream"])
-        self.key_var.set(cfg["api_key"])
-        self.model_var.set(cfg["model"])
-        self.port_var.set(str(cfg["bridge_port"]))
-        self.pid_var.set(str(cfg.get("provider_id", 4)))
-        self.extra_var.set(str(cfg.get("extra_models", 0)))
-        self.force_var.set(bool(cfg.get("force_model", True)))
-        self.trust_var.set(bool(cfg.get("trust_client_key", False)))
+        self.up_var.set(cfg.get("upstream", P.DEFAULT_CFG["upstream"]))
+        self.key_var.set(cfg.get("api_key", ""))
+        self.model_var.set(cfg.get("model", P.DEFAULT_CFG["model"]))
         self.cfg_tip_var.set(
             "已载入本机配置 ProPilotFix.json（改动后点修复即保存）" if exists else
-            "⚠ 当前是示例配置：把上游 / 密钥 / 模型改成你自己的再点修复；"
-            "本地服务不需要密钥可留空")
+            "⚠ 当前是示例配置：把地址 / 密钥 / 模型改成你自己的再点修复")
+        self._refresh_effective()
 
     def browse(self):
         d = filedialog.askdirectory(title="选择 ProPilot.dll 所在的文件夹（一般是 Bin）")
@@ -575,27 +535,14 @@ class App(object):
         self.cb_var.set(d)
         self._load_cfg(d)
         self.find_var.set("已手动指定")
-        self.status_var.set("已定位 DLL · 填好上游/密钥/模型后点「★ 一键永久修复」")
+        self.status_var.set("已定位 DLL · 填好地址/密钥/模型后点「★ 一键永久修复」")
 
-    def collect_cfg(self, quiet=False):
-        def _int(var, dflt):
-            try:
-                return int(str(var.get()).strip())
-            except Exception:
-                return dflt
-        port = _int(self.port_var, P.DEFAULT_CFG["bridge_port"])
-        if not quiet and str(port) != str(self.port_var.get()).strip():
-            self.port_var.set(str(port))
+    def collect_cfg(self):
         c = dict(P.DEFAULT_CFG)
         c.update({
             "upstream": self.up_var.get().strip(),
             "api_key": self.key_var.get().strip(),
             "model": self.model_var.get().strip(),
-            "bridge_port": port,
-            "provider_id": _int(self.pid_var, 4),
-            "force_model": bool(self.force_var.get()),
-            "extra_models": _int(self.extra_var, 0),
-            "trust_client_key": bool(self.trust_var.get()),
         })
         return c
 
@@ -640,25 +587,6 @@ class App(object):
                 LOG_Q.put(("done", None))
         threading.Thread(target=work, daemon=True).start()
 
-    def _start_bridge(self, cfg):
-        if self.bridge_started:
-            LOG_Q.put(("log", "[i] 代理已在运行，不重复启动"))
-            return
-        self.bridge_started = True
-
-        def run():
-            try:
-                P.serve(cfg)
-            except Exception as e:
-                LOG_Q.put(("log", "[X] 代理异常：%r" % (e,)))
-            finally:
-                self.bridge_started = False
-                LOG_Q.put(("log", "[i] 代理已停止"))
-                LOG_Q.put(("status", "代理已停止"))
-        threading.Thread(target=run, daemon=True).start()
-        LOG_Q.put(("status", "代理运行中 · 127.0.0.1:%s · 关闭本窗口即停止" %
-                   cfg["bridge_port"]))
-
     # ---- 按钮 ------------------------------------------------------------
     def on_fix(self):
         cfg = self._ready()
@@ -667,36 +595,11 @@ class App(object):
 
         def job():
             P.cmd_check(cfg)
-            rc = P.cmd_fix(cfg, no_reg=False, direct=True)
+            rc = P.cmd_fix(cfg, no_reg=False)
             LOG_Q.put(("status",
-                       "永久修复完成 · 纯直连 · 零进程零自启 · 重开 Proteus 9 直接聊天"
+                       "永久修复完成 · 只聊天 · 零进程零自启 · 重开 Proteus 9 直接聊天"
                        if rc == 0 else "修复未完成，请看日志"))
         self._run("一键永久修复", job)
-
-    def on_compat(self):
-        cfg = self._ready()
-        if cfg is None:
-            return
-        if not messagebox.askokcancel(
-                TITLE,
-                "切到「兼容代理」模式？\n\n"
-                "· 注册表接口地址改回 127.0.0.1:<代理端口>，由本工具代理转发\n"
-                "· 只在你老上游协议不兼容、直连聊不通时才需要\n"
-                "· 代理是独立后台进程，关掉本窗口也不停，但【不会开机自启】\n"
-                "· 重开机后要用，得再点一次这个按钮\n\n"
-                "想回到默认零插件状态，点一次「一键永久修复」即可。"):
-            return
-
-        def job():
-            P.cmd_check(cfg)
-            rc = P.cmd_fix(cfg, no_reg=False, direct=False)
-            if rc == 0:
-                _, msg = P.spawn_bridge()
-                LOG_Q.put(("log", "[8] " + msg))
-                LOG_Q.put(("status", "兼容代理已启动 · 手动模式 · 重开 Proteus 9"))
-            else:
-                LOG_Q.put(("status", "代理模式切换未完成，请看日志"))
-        self._run("兼容代理", job)
 
     def on_check(self):
         cfg = self._ready()
@@ -704,21 +607,6 @@ class App(object):
             return
         self._run("只读体检", lambda: (P.cmd_check(cfg),
                                      LOG_Q.put(("status", "体检完成"))))
-
-    def on_cfgcheck(self):
-        cfg = self._ready(need_dll=False)
-        if cfg is None:
-            return
-
-        def job():
-            P.log("配置自检（只读，不改任何东西）")
-            P.cfg_report(cfg)
-            errs = P.validate_cfg(cfg)
-            for e in errs:
-                P.log("[X] " + e)
-            P.log("[i] 上面就是本次修复实际会用的值，和界面填的不一致 = 没读到")
-            LOG_Q.put(("status", "配置自检完成" if not errs else "配置有错，请看日志"))
-        self._run("配置自检", job)
 
     def on_probe(self):
         cfg = self._ready(need_dll=False)
@@ -731,44 +619,8 @@ class App(object):
                        else "接口不通，请看日志里的具体原因"))
         self._run("接口自检", job)
 
-    def on_fixreg(self):
-        cfg = self._ready(need_dll=False)
-        if cfg is None:
-            return
-
-        def job():
-            P.reg_backup()
-            P.reg_fix(cfg)
-            LOG_Q.put(("log", "只修注册表完成"))
-            LOG_Q.put(("status", "注册表已修复"))
-        self._run("只修注册表", job)
-
-    def on_test(self):
-        cfg = self._ready(need_dll=False)
-        if cfg is None:
-            return
-        self._run("端到端自测", lambda: (P.selftest(cfg),
-                                       LOG_Q.put(("status", "自测结束"))))
-
-    def on_serve(self):
-        cfg = self._ready(need_dll=False)
-        if cfg is None:
-            return
-
-        def job():
-            P.init_bridge(cfg)
-            if P.bridge_alive(cfg["bridge_port"]):
-                LOG_Q.put(("log", "[i] 端口 %s 上已有代理在运行，不重复启动" %
-                           cfg["bridge_port"]))
-            else:
-                _, msg = P.spawn_bridge()
-                LOG_Q.put(("log", "[i] " + msg))
-            LOG_Q.put(("status", "代理已启动（手动，不开机自启）"))
-        self._run("启动代理", job)
-
     def on_rollback(self):
-        if not messagebox.askokcancel(TITLE, "确定还原 DLL 和注册表到修复前的状态？\n\n"
-                                             "会同时停止本工具启动的后台代理。"):
+        if not messagebox.askokcancel(TITLE, "确定还原 DLL 和注册表到修复前的状态？"):
             return
         cfg = self._ready(need_dll=False)
         if cfg is None:
@@ -797,9 +649,6 @@ class App(object):
             messagebox.showerror(TITLE, "提权失败：%r" % (e,))
 
     def on_close(self):
-        if self.bridge_started and not messagebox.askokcancel(
-                TITLE, "代理正在运行，关闭窗口会停止代理。确定退出？"):
-            return
         self.root.destroy()
 
 
@@ -824,7 +673,6 @@ def main():
         return rc
 
     if "--selftest-ui" in sys.argv:
-        # 验证打包后 tcl/tk 数据完整、界面能构建（不显示窗口、不留进程）
         r = tk.Tk()
         r.withdraw()
         App(r)
@@ -862,7 +710,7 @@ def main():
             print("AUTO CFG = " + cfgpath, flush=True)
         else:
             cfg = P.load_cfg(interactive=False)
-        rc = P.cmd_fix(cfg, no_reg=("--no-reg" in sys.argv), direct=True)
+        rc = P.cmd_fix(cfg, no_reg=("--no-reg" in sys.argv))
         print("AUTO RC = %d" % rc, flush=True)
         return rc
 
