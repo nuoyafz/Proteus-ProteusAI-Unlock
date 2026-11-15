@@ -289,7 +289,7 @@ class App(object):
         self.root = root
         self.busy = False
         self.dir_var = tk.StringVar(value="")
-        root.title(TITLE + "    v3")
+        root.title(TITLE + "    v3.1")
         root.geometry("760x600")
         root.minsize(680, 520)
         root.configure(bg=BG)
@@ -309,7 +309,7 @@ class App(object):
         if title:
             tk.Label(inner, text=title, bg=CARD, fg=MUTED, font=FONT_SM,
                      anchor="w").pack(fill="x", pady=(0, 8))
-        return inner
+        return inner, outer          # (内层放控件, 外层负责 pack)
 
     def _build_head(self):
         head = tk.Frame(self.root, bg=BG, padx=16, pady=12)
@@ -324,7 +324,8 @@ class App(object):
         wrap = tk.Frame(self.root, bg=BG, padx=16)
         wrap.pack(fill="x")
         c = self._card(wrap, "① 定位 ProPilot.dll")
-        c.master.master.pack(fill="x", pady=(0, 10))
+        c[1].pack(fill="x", pady=(0, 10))
+        c = c[0]
 
         row = tk.Frame(c, bg=CARD)
         row.pack(fill="x")
@@ -334,8 +335,8 @@ class App(object):
         _btn(row, "重新搜索", self.search).pack(side="right", padx=(6, 0))
         _btn(row, "浏览…", self.browse).pack(side="right")
 
-        c2 = self._card(wrap, "② 一键修复")
-        c2.master.master.pack(fill="x", pady=(0, 10))
+        c2, c2out = self._card(wrap, "② 一键修复")
+        c2out.pack(fill="x", pady=(0, 10))
         b = _btn(c2, "★  一键修复 ProPilot", self.on_fix, primary=True)
         b.pack(fill="x", pady=(0, 8))
         self.main_btn = b
@@ -361,8 +362,8 @@ class App(object):
     def _build_log(self):
         wrap = tk.Frame(self.root, bg=BG, padx=16, pady=10)
         wrap.pack(fill="both", expand=True)
-        c = self._card(wrap, "运行日志（同时写入 ProPilotFix.log）")
-        c.master.master.pack(fill="both", expand=True)
+        c, cout = self._card(wrap, "运行日志（同时写入 ProPilotFix.log）")
+        cout.pack(fill="both", expand=True)
         self.txt = scrolledtext.ScrolledText(
             c, height=9, font=("Consolas", 9), bg="#f8fafc", fg="#334155",
             relief="solid", bd=1, wrap="word")

@@ -52,10 +52,21 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-TOOL = "ProPilotFix 3.0"
+TOOL = "ProPilotFix 3.1"
 
 # 主窗口标题：写死在程序里，界面、配置文件、命令行都改不了
 WINDOW_TITLE = "ProPilotFix"
+
+# 设置对话框标题（原 "ProPilot Configuration"）：固定槽位只有 24 字节（含结尾 0），
+# 所以签名用按容量择优的候选表，第一条放最完整的写法。
+BRAND_TITLE_FO = 0x10CFF0
+BRAND_TITLE_ENG = "ProPilot Configuration"
+BRAND_TITLES = [
+    "设置 · NoYa修复版",     # 23 字节，正好放满
+    "设置 NoYa修复版",       # 21
+    "NoYa修复版",            # 13
+    "ProPilot 设置",         # 15（保底，老版本容量不足时用）
+]
 
 # ==========================================================================
 #  配置 —— 换环境改这里，或改同目录的 ProPilotFix.json
@@ -255,7 +266,6 @@ UI_MAP = [
     # —— 界面上仍残留的英文，沿用同一套逐字节校验，容量不足自动跳过 ——
     (0x10AF28, "ProPilot Chat", ["ProPilot 对话", "对话窗口"]),
     (0x10AF50, "Configure ProPilot", ["配置 ProPilot", "设置"]),
-    (0x10CFF0, "ProPilot Configuration", ["ProPilot 设置", "设置"]),
     (0x10B038, "ProPilot is thinking", ["ProPilot 正在思考", "正在思考"]),
     (0x10B000, "Ask ProPilot a question about your design...",
      ["向 ProPilot 提问设计问题…", "输入你的设计问题…"]),
@@ -277,6 +287,18 @@ def placeholders(s):
 
 def capacity(d, off, n):
     p, extra = off + n, 0
+    while p < len(d) and d[p] == 0 and extra < 256:
+        p += 1
+        extra += 1
+    return n + extra - 1
+
+
+def slot_cap(d, off):
+    """不依赖原串长度：从 off 起读到第一个 0，再把后面的 0 也算成可用空间。"""
+    n = 0
+    while off + n < len(d) and d[off + n] != 0:
+        n += 1
+    extra, p = 0, off + n
     while p < len(d) and d[p] == 0 and extra < 256:
         p += 1
         extra += 1
@@ -309,6 +331,29 @@ def patch_ui(d, title=None):
     else:
         bad += 1
         notes.append("主标题容量不足 cap=%d" % t_cap)
+
+    # ①b 设置对话框标题：追加签名 "NoYa 修复版"（槽位固定，按容量择优）
+    b_cap = slot_cap(d, BRAND_TITLE_FO)
+    b_cur = d[BRAND_TITLE_FO:BRAND_TITLE_FO + b_cap + 1].split(b"\0")[0]
+    b_pick = next((c.encode("utf-8") for c in BRAND_TITLES
+                   if len(c.encode("utf-8")) <= b_cap), None)
+    b_known = bool(b_cur) and (b_cur.startswith(b"ProPilot")
+                               or any(x >= 0x80 for x in b_cur))
+    if b_pick is None:
+        bad += 1
+        notes.append("设置标题容量不足 cap=%d" % b_cap)
+    elif b_cur == b_pick:
+        skip += 1
+    elif b_known:
+        d[BRAND_TITLE_FO:BRAND_TITLE_FO + b_cap + 1] = \
+            b_pick + b"\0" * (b_cap + 1 - len(b_pick))
+        ok += 1
+        notes.append("设置标题 0x%06X: %r -> %r" %
+                     (BRAND_TITLE_FO, b_cur.decode("utf-8", "replace"),
+                      b_pick.decode("utf-8")))
+    else:
+        bad += 1
+        notes.append("设置标题 0x%06X 未匹配 %r" % (BRAND_TITLE_FO, bytes(b_cur[:24])))
 
     for off, eng, cands in items[:-1]:
         eb = eng.encode("ascii")
