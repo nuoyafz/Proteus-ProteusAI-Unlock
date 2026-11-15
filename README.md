@@ -34,11 +34,11 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| **[⬇ Releases · v2.0.0](https://github.com/nuoyafz/Proteus-ProteusAI-Unlock/releases/tag/v2.0.0)** | **推荐**。下载页面里的附件（文件名 `ProPilotFix.exe`） |
+| **[⬇ Releases · v2.1.0](https://github.com/nuoyafz/Proteus-ProteusAI-Unlock/releases/tag/v2.1.0)** | **推荐**。下载页面里的附件（文件名 `ProPilotFix.exe`） |
 | [`release/ProPilotFix.exe`](release/ProPilotFix.exe) | 仓库内直链，约 9.9 MB。Windows 单文件 GUI，无需装 Python、无需安装 |
 | `ProPilotFixGUI.py` + `ProPilotFix.py` | 源码，纯 Python 标准库，想自己改 / 自己打包用 |
 
-> 两个 exe 内容完全一致（SHA256 `cc4d8f6f2301d13b3873ba7e514911cdf1b74519382c8bf8083cebf5a319a358`）。下载后放桌面、微信下载目录、U 盘都行，**别放进 `ProPilot.dll` 目录**。
+> 两个 exe 内容完全一致（SHA256 `a5a4fba3b358a4900f428c21dfc26c484d3d446449a364f8812f889ceff5e81e`）。下载后放桌面、微信下载目录、U 盘都行，**别放进 `ProPilot.dll` 目录**。
 
 ---
 
@@ -65,7 +65,7 @@
    | 顺序 | 按钮 | 作用 |
    | --- | --- | --- |
    | 先 | `● 接口自检` | **只读**，不改任何文件。按真实拼法 GET 模型表 + POST 一句 `hi`，显示「聊天接口可用」再继续 |
-   | 后 | `★ 一键永久修复` | 改 DLL（汉化 / 标题 / 模型 / 地址后缀）+ 原样写注册表，完成 |
+   | 后 | `★ 一键永久修复` | 改 DLL（汉化 / 标题 / 模型 / 后缀自愈）+ 写注册表根地址，完成 |
 
    最后**重开 Proteus 9**，直接发消息就能聊。
 
@@ -112,7 +112,7 @@ ProPilot 的 Custom 服务商有 **3 条互相矛盾的 URL 拼装规则**：
 
 | 原版问题 | 修复做法 | 效果 |
 | --- | --- | --- |
-| ① 自定义接口连不上 | **改 DLL 里 Custom 的裸后缀**：`/v1/chat/completions` → `/chat/completions`、`/v1/models` → `/models`。注册表**原样**保存你填的地址（填到 `/v1` 为止） | 你填 `http://x/v1` → ProPilot 请求 `http://x/v1/chat/completions`。**纯直连**，中间无任何进程 |
+| ① 自定义接口连不上 | 注册表写**根地址**（你填 `http://x/v1` 会自动归成 `http://x`），并把被旧版工具改坏的 DLL 裸后缀**自动纠回** `/v1/chat/completions`、`/v1/models` | 你填 `http://x/v1` → ProPilot 请求 `http://x/v1/chat/completions`。**纯直连**，中间无任何进程 |
 | ② 全英文 | 原地替换 `ProPilot.dll` 的 `.rdata` 里 **64 条** UTF-8 字符串常量（含主窗口标题） | 设置、按钮、报错全中文；主窗口标题写死为「ProPilotFix」 |
 | ③ 模型写死 | 把 `FUN_18007ce60` 首条 `LEA RDX,[rip+disp32]` 的 disp32 指向 `.rdata` 空闲块（`0x171182`），块内写入你的模型名；清空 `No Model` / `Loading models...` 占位符 | 下拉框首项就是你的模型，点 OK 写回的也是它 |
 | ④ 密钥污染 | 密钥统一以配置为准（base64 写入 `Providers\4\apikey`），占位符/脏值复位 | 换自己的接口/密钥立刻生效，不再 401 |
@@ -133,7 +133,7 @@ ProPilot 的 Custom 服务商有 **3 条互相矛盾的 URL 拼装规则**：
 ### 安全性设计（改 DLL 不是闹着玩的）
 
 - 每条字符串写入前校验：文件偏移处的**英文原文 + 尾部 NUL + `%1` 占位符 + 可用容量**，对不上就跳过，绝不盲写；带 `%1~%4` 的复合格式串刻意不改。
-- 地址后缀只改 **Custom 的裸后缀**（独立 C 串）；内置服务商（OpenAI / DeepSeek / xAI …）的完整 URL 模板**一字节不动**。
+- 地址后缀只在检测到被旧版工具改坏时才纠回，且只认 **Custom 的裸后缀**（独立 C 串）；内置服务商（OpenAI / DeepSeek / xAI …）的完整 URL 模板**一字节不动**。
 - 只改 `.rdata` 的字符串和 `.text` 里 `LEA` 的 **4 字节 disp32**；PE 头、节表、其它代码段一字节不动（落盘时做 `diff_report` 校验，越界即自动回滚）。
 - 原版 / 补丁版都跑一次 `LoadLibrary` 对比，只有补丁版加载失败才回滚。
 - `ProPilot.dll.orig` **只备份一次、永不覆盖**；注册表另存 `ProPilotFix_registry.json`；界面「一键还原」随时回退。
@@ -141,34 +141,39 @@ ProPilot 的 Custom 服务商有 **3 条互相矛盾的 URL 拼装规则**：
 
 ---
 
-## 三、为什么是「你填什么就是什么」
+## 三、注册表到底存什么（真机实测结论）
 
-旧版工具为了迁就 ProPilot 的硬拼规则，会把用户填的 `.../v1` **剥成根地址**再让它拼回去 —— 用户看到地址被改，觉得乱。
-v2 直接改底层后缀，于是注册表里存的就是**你填的那个地址，一个字不改**：
+ProPilot 的请求 URL 是写死的：
 
 ```mermaid
 flowchart LR
-    A["你填 https://x/v1"] --> B["注册表 baseUrl = https://x/v1（原样）"]
-    B --> C["DLL 拼 /chat/completions"]
-    C --> D["实际请求 https://x/v1/chat/completions"]
+    A["注册表 baseUrl（必须是根地址）"] --> B["固定拼上 /v1/chat/completions"]
+    B --> C["实际请求"]
 ```
 
-没有代理、没有归一、没有「直连 / 代理」开关，只有一条路。
+也就是说 **`baseUrl` 必须是不带 `/v1` 的根地址**。
+
+> ⚠️ 曾经试过另一条路：把 DLL 里的裸后缀改成 `/chat/completions`、注册表原样存 `.../v1`。
+> 真机结果是聊天请求打到了根路径 `/`，返回 **405「资源仅支持 GET 或 HEAD」**，聊天完全不可用。
+> 这条路已废弃；本版工具会把被改坏的后缀**自动纠回** `/v1/chat/completions`，重跑一次即恢复。
+
+你要做的只有一件：**地址填到 `/v1` 为止**（绝大多数中转站 / 云 API 文档给的就是这个 Base URL），工具自动归成根地址。
+
+没有代理、没有常驻进程、没有「直连 / 代理」开关，只有一条路。
 
 ---
 
 ## 四、地址怎么填
 
-**约定：填到 `/v1` 为止**（这就是绝大多数中转站 / 云 API 文档里给的那个 Base URL）。工具不会剥 `/v1`、不会帮你猜、不会改你填的地址。
-
 | 你填的接口地址（示例） | 写入注册表 | ProPilot 实际请求 |
 | --- | --- | --- |
-| `https://api.deepseek.com/v1` | `https://api.deepseek.com/v1` | `https://api.deepseek.com/v1/chat/completions` ✅ |
-| `https://dashscope.aliyuncs.com/compatible-mode/v1` | 同左 | `.../compatible-mode/v1/chat/completions` ✅ |
-| `http://127.0.0.1:11434/v1`（Ollama） | 同左 | `http://127.0.0.1:11434/v1/chat/completions` ✅ |
-| `http://127.0.0.1:8000/v1`（本地服务） | 同左 | `http://127.0.0.1:8000/v1/chat/completions` ✅ |
-| `https://xxx.com/v1/chat/completions`（误填完整端点） | 自动去掉尾部 `/chat/completions` | `https://xxx.com/v1/chat/completions` ✅ |
+| `https://api.deepseek.com/v1` | `https://api.deepseek.com` | `https://api.deepseek.com/v1/chat/completions` ✅ |
+| `https://dashscope.aliyuncs.com/compatible-mode/v1` | `https://dashscope.aliyuncs.com/compatible-mode` | `.../compatible-mode/v1/chat/completions` ✅ |
+| `http://127.0.0.1:11434/v1`（Ollama） | `http://127.0.0.1:11434` | `http://127.0.0.1:11434/v1/chat/completions` ✅ |
+| `http://127.0.0.1:8000/v1`（本地服务） | `http://127.0.0.1:8000` | `http://127.0.0.1:8000/v1/chat/completions` ✅ |
+| `https://xxx.com/v1/chat/completions`（误填完整端点） | `https://xxx.com` | `https://xxx.com/v1/chat/completions` ✅ |
 
+> 界面上的绿色「实际请求」永远显示最终那一条完整 URL，对着它核一眼就够。
 > 换自己的中转站 / 云 API / 密钥 / 模型，全部在界面上填，**不需要改代码**。
 
 ---
@@ -204,22 +209,22 @@ flowchart LR
 | `UI_MAP` | 64 条 | 界面 / 报错英文串 → 中文（候选按容量自动挑最短可用译文） |
 | `LEA_FO` | `0x7C289` | `FUN_18007ce60` 首条 `48 8D 15 <disp32>` |
 | `STR_FO` | `0x171182` | `.rdata` 里 110 字节全 0 空闲块，用来放自定义模型名 |
-| 裸后缀（聊天） | `0x115EC0` | `/v1/chat/completions` → `/chat/completions` |
-| 裸后缀（模型表） | `0x115E88` | `/v1/models` → `/models` |
+| 裸后缀（聊天） | `0x115EC0` | 正常值 `/v1/chat/completions`（若被旧版改坏则自动纠回） |
+| 裸后缀（模型表） | `0x115E88` | 正常值 `/v1/models`（同上） |
 
-> 后缀补丁靠**内容定位**而非死偏移：只改「前一个字节不是 URL 字符」的独立 C 串，所以内置服务商的完整 URL 模板（`https://api.openai.com/v1/chat/completions` 等）不会被动到。
+> 后缀自愈靠**内容定位**而非死偏移：只认「前一个字节不是 URL 字符」的独立 C 串，所以内置服务商的完整 URL 模板（`https://api.openai.com/v1/chat/completions` 等）不会被动到；原槽位放不下就不写。
 
 **注册表**（纯 `winreg` API，不调 `reg.exe`）：
 
 ```
 HKCU\Software\Labcenter Electronics\Proteus 9 Professional\PROPILOT\LLM Configuration
     activeProvider = 4 (Custom, REG_DWORD)
-    Providers\4\baseUrl = 你填的地址（原样，到 /v1 为止）
+    Providers\4\baseUrl = 根地址（你填 .../v1，自动归成不带 /v1 的根）
     Providers\4\model   = 你的模型名
     Providers\4\apikey  = base64(你的密钥)
 ```
 
-**地址推导**：注册表原样存你填的地址；DLL 已改成只拼 `/chat/completions` 与 `/models`。所以「填到 `/v1`」就能得到正确的完整端点。
+**地址推导**：注册表存根地址；ProPilot 固定拼 `/v1/chat/completions`。所以「填到 `/v1`」就能得到正确的完整端点，且这个组合已在真机验证到 `HTTP 200`。
 
 ---
 

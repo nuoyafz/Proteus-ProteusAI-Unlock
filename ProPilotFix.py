@@ -3,18 +3,16 @@
 ProPilotFix —— ProPilot 9.2 自定义接口 / 汉化 一键永久修复（只聊天 · 一条路）
 
 干什么：让 Proteus 9 自带的 ProPilot AI 助手用自己的 OpenAI 兼容接口正常聊天。
-  · 改 ProPilot.dll：汉化 64 条界面 + 主窗口标题 + 模型下拉框首项 +
-    Custom 的 URL 后缀由 /v1/chat/completions 改成 /chat/completions
-  · 写注册表：接口地址「原样」保存（填到 /v1 为止），密钥、模型一并写好
+  · 改 ProPilot.dll：汉化 64 条界面 + 主窗口标题 + 模型下拉框首项
+    （并把被旧版改坏的 URL 后缀自愈回 /v1/chat/completions）
+  · 写注册表：接口根地址（填 .../v1 会自动归成根）、密钥、模型一并写好
   · 之后 ProPilot 直接请求你自己的上游：零常驻进程、零开机自启、只聊天
 
-为什么改后缀（v2 核心）：ProPilot 原本会把 baseUrl 硬拼上 /v1/chat/completions，
-所以旧版工具要先把用户填的地址「剥掉 /v1」才拼得对 —— 用户看到地址被改，觉得乱。
-新版直接把 DLL 的裸后缀改成 /chat/completions（模型表 /models），于是
-「你填什么就是什么」：
-      你填  http://127.0.0.1:8000/v1
-      请求  http://127.0.0.1:8000/v1/chat/completions
-      注册表里的地址一个字不改。
+URL 是怎么拼的（真机实测）：ProPilot 固定用
+      baseUrl + "/v1/chat/completions"
+所以注册表里必须存「根地址」。你填 http://127.0.0.1:8000/v1，工具存
+http://127.0.0.1:8000，ProPilot 实际请求 http://127.0.0.1:8000/v1/chat/completions —— 正好是你想聊的那个地址。
+（曾试过「改 DLL 后缀 + 原样存 /v1」，真机结果是聊天打到根路径报 405，已废弃并自动纠回。）
 
 命令（命令行版；日常推荐 GUI：ProPilotFixGUI.py）：
   fix       一键永久修复（默认）
@@ -309,7 +307,24 @@ def patch_ui(d, title=None):
     # title 参数只为兼容旧调用保留，一律忽略 —— 标题不允许被外部改
     ok = skip = bad = 0
     notes = []
-    for off, eng, cands in ui_items():
+    items = ui_items()
+    # ① 主窗口标题：强制写死为 WINDOW_TITLE（不管当前是英文、旧中文还是别的）
+    t_off, t_eng, _ = items[-1]
+    t_cap = capacity(d, t_off, len(t_eng))
+    t_new = WINDOW_TITLE.encode("utf-8")
+    t_cur = d[t_off:t_off + t_cap + 1].split(b"\0")[0]
+    if t_cur == t_new:
+        skip += 1
+    elif len(t_new) <= t_cap:
+        d[t_off:t_off + t_cap + 1] = t_new + b"\0" * (t_cap + 1 - len(t_new))
+        ok += 1
+        notes.append("主标题 0x%06X: %r -> %r" %
+                     (t_off, t_cur.decode("utf-8", "replace"), WINDOW_TITLE))
+    else:
+        bad += 1
+        notes.append("主标题容量不足 cap=%d" % t_cap)
+
+    for off, eng, cands in items[:-1]:
         eb = eng.encode("ascii")
         if off + len(eb) + 1 > len(d):
             bad += 1
@@ -433,9 +448,9 @@ def patch_model(d, model):
 
 
 # ==========================================================================
-#  ② 地址后缀补丁：让注册表能「原样」保存用户填的地址
-#  Custom 用的裸后缀 /v1/chat/completions -> /chat/completions
-#                 /v1/models          -> /models
+#  ② 地址后缀自愈：把被旧版改坏的裸后缀纠回带 /v1 的原样
+#  Custom 用的裸后缀 /chat/completions -> /v1/chat/completions
+#                  /models          -> /v1/models
 #  只动裸后缀，内置服务商（OpenAI/DeepSeek/xAI…）的完整 URL 模板一律不碰。
 # ==========================================================================
 def _bare_suffix(d, old, new):
@@ -461,23 +476,39 @@ def custom_models_suffix(d):
 
 
 def patch_endpoint(d):
-    """把 Custom 的裸后缀改成 /chat/completions 与 /models，返回 (改动数, 说明)。"""
+    """把 Custom 的裸后缀纠正回 /v1/chat/completions 与 /v1/models，返回 (改动数, 说明)。
+
+    为什么要纠回：ProPilot 真实聊天时是「baseUrl(根) + /v1/chat/completions」，
+    裸后缀必须自带 /v1。早期版本把后缀剥成 /chat/completions 是错的，
+    会导致聊天实际打到 baseUrl + 空路径 -> 405「资源仅支持 GET 或 HEAD」。
+    本函数同时充当自愈：已经改坏的 DLL 重跑一次就恢复正常。
+    """
     changed, notes = 0, []
-    for old, new, label in ((b"/v1/chat/completions", b"/chat/completions", "聊天"),
-                            (b"/v1/models", b"/models", "模型表")):
+    for bare, full, label in ((b"/chat/completions", b"/v1/chat/completions", "聊天"),
+                              (b"/models", b"/v1/models", "模型表")):
         j = 0
         while True:
-            j = d.find(old, j)
+            j = d.find(bare, j)
             if j < 0:
                 break
-            if j != 0 and d[j - 1] in URL_CHARS:
-                j += 1                       # 完整 URL 模板的一部分，跳过
+            prev = d[j - 1] if j else 0
+            # 前面紧贴 URL 字符说明是完整模板的一部分（https://api.x.ai/...），跳过
+            if j and prev in URL_CHARS:
+                j += 1
                 continue
-            d[j:j + len(old)] = new + b"\0" * (len(old) - len(new))
+            span = len(full) + 1
+            if d[j:j + span] == full + b"\0":
+                # 已经是 /v1/xxx，跳过（幂等）
+                j += len(full)
+                continue
+            if d[j:j + len(bare)] != bare or d[j + len(bare):j + span].strip(b"\0"):
+                j += 1
+                continue                 # 原槽位放不下，不乱写
+            d[j:j + span] = full + b"\0"
             changed += 1
             notes.append("%s裸后缀 0x%X: %s -> %s" %
-                         (label, j, old.decode(), new.decode()))
-            j += len(new)
+                         (label, j, bare.decode(), full.decode()))
+            j += len(full)
     return changed, notes
 
 
@@ -635,24 +666,32 @@ def reg_del(sub, name):
 
 
 # ==========================================================================
-#  地址：注册表原样保存「你填的地址」，DLL 已改成只拼 /chat/completions
+#  地址：注册表存「根地址」，ProPilot 自己拼 /v1/chat/completions
 # ==========================================================================
 def upstream_base(cfg):
-    """用户填的地址原样用；只去掉末尾斜杠，以及误带的 /chat/completions 或 /models。
-    这样「填到 /v1」和「填了完整 chat 地址」两种都认，且不改动有意义的部分。"""
+    """把用户填的地址归到「根地址」（不带 /v1）。
+
+    ProPilot 真实请求 = baseUrl + "/v1/chat/completions"（硬约束，改不了），
+    所以 baseUrl 必须是根地址。
+      填 http://127.0.0.1:8000/v1        -> 存 http://127.0.0.1:8000
+      填 http://127.0.0.1:8000           -> 存 http://127.0.0.1:8000
+      填 http://127.0.0.1:8000/v1/chat/completions -> 存 http://127.0.0.1:8000
+    """
     u = str(cfg.get("upstream", "")).strip().rstrip("/")
-    for suf in ("/chat/completions", "/models"):
+    for suf in ("/chat/completions", "/v1/models", "/models"):
         if u.endswith(suf):
             u = u[:-len(suf)]
-    return u
+    if u.endswith("/v1"):
+        u = u[:-3]
+    return u.rstrip("/")
 
 
 def chat_url(cfg):
-    return upstream_base(cfg) + "/chat/completions"
+    return upstream_base(cfg) + "/v1/chat/completions"
 
 
 def models_url(cfg):
-    return upstream_base(cfg) + "/models"
+    return upstream_base(cfg) + "/v1/models"
 
 
 def _mask(key):
@@ -665,7 +704,7 @@ def reg_fix(cfg):
     pid = int(cfg.get("provider_id", 4))
     reg_set(LC, "activeProvider", pid, winreg.REG_DWORD)
     p = LC + (r"\Providers\%d" % pid)
-    reg_set(p, "baseUrl", ep)                       # ★ 原样，不再剥 /v1
+    reg_set(p, "baseUrl", ep)                  # ★ 根地址：ProPilot 自己会补 /v1/chat/completions
     reg_set(p, "model", cfg["model"])
     reg_set(p, "apikey",
             base64.b64encode(str(cfg.get("api_key", "")).encode("utf-8")).decode("ascii"))
@@ -674,7 +713,7 @@ def reg_fix(cfg):
     reg_set(p, "enableWebSearch", "false")
     reg_set(p, "enableThinking", "false")
     reg_set(p, "enableStreaming", "false")
-    log("    [%d] 接口地址 -> %s   （原样，不改）" % (pid, ep))
+    log("    [%d] 接口根地址 -> %s   （你填 %s）" % (pid, ep, cfg.get("upstream")))
     log("    [%d] 模型 -> %s   密钥 -> %s   只聊天(Web/Thinking/Stream=关)" %
         (pid, cfg["model"], _mask(cfg.get("api_key"))))
     cur_model, _ = reg_get(p, "model")
@@ -705,7 +744,8 @@ def validate_cfg(cfg):
 def cfg_report(cfg):
     """把「实际生效」的配置打出来对账，专治「配置写了但代码没读」。"""
     log("    你填的地址 : " + str(cfg.get("upstream", "")))
-    log("    注册表存   : " + upstream_base(cfg) + "   （原样，不改）")
+    log("    你填的地址 : " + str(cfg.get("upstream")))
+    log("    注册表存   : " + upstream_base(cfg) + "   （根地址）")
     log("    实际请求   : " + chat_url(cfg))
     log("    模型表     : " + models_url(cfg))
     log("    模型       : " + str(cfg.get("model", "")))
@@ -855,8 +895,10 @@ def cmd_check(cfg):
     log("  汉化    : 中文 %d / 仍英文 %d / 共 %d 条（含主窗口标题）" % (zh, en, len(items)))
     log("  主标题  : %r" % d[TITLE_FO:TITLE_FO + 64].split(b"\0")[0]
         .decode("utf-8", "replace"))
-    log("  Custom 后缀: 聊天 %s / 模型表 %s   （应为 /chat/completions 与 /models）" %
-        (custom_chat_suffix(d), custom_models_suffix(d)))
+    _cs, _ms = custom_chat_suffix(d), custom_models_suffix(d)
+    log("  Custom 后缀: 聊天 %s / 模型表 %s   %s" %
+        (_cs, _ms, "OK" if (_cs, _ms) == ("/v1/chat/completions", "/v1/models")
+         else "[!] 异常，重跑一次「一键修复」会自愈"))
 
     secs = pe_sections(d)
     lea_va, sec = o2v(secs, LEA_FO)
@@ -938,11 +980,11 @@ def cmd_fix(cfg, no_reg=False):
 
     ep_ok, ep_notes = patch_endpoint(data)
     if ep_ok:
-        log("[3] 地址后缀补丁：改 %d 处（Custom 只拼 /chat/completions）" % ep_ok)
+        log("[3] 地址后缀纠正：改 %d 处（恢复成 /v1/chat/completions）" % ep_ok)
         for n in ep_notes:
             log("      " + n)
     else:
-        log("[3] 地址后缀已是 /chat/completions（补丁已在）")
+        log("[3] 地址后缀正常（/v1/chat/completions 已在，无需改动）")
 
     ui_ok, ui_skip, ui_bad, notes = patch_ui(data)
     log("[4] 汉化（含主窗口标题）：新增 %d 条，已是中文 %d 条，跳过 %d 条" %
@@ -992,7 +1034,7 @@ def cmd_fix(cfg, no_reg=False):
     log("")
     log("修复完成【只聊天 · 一条路 · 零插件零自启】")
     log("  你填的地址   : %s" % cfg.get("upstream"))
-    log("  注册表原样存 : %s" % upstream_base(cfg))
+    log("  注册表存根地址: %s" % upstream_base(cfg))
     log("  ProPilot 请求 : %s" % chat_url(cfg))
     log("  只要上游服务在跑，开机直接开 Proteus 9 就能聊，不用启动任何工具")
     log("  ★ 不要点设置里的「测试连接」——它把根地址当完整 URL POST，必失败，但不影响聊天")
