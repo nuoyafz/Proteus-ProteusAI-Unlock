@@ -52,7 +52,7 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-TOOL = "ProPilotFix 2.0"
+TOOL = "ProPilotFix 3.0"
 
 # 主窗口标题：写死在程序里，界面、配置文件、命令行都改不了
 WINDOW_TITLE = "ProPilotFix"
@@ -61,11 +61,12 @@ WINDOW_TITLE = "ProPilotFix"
 #  配置 —— 换环境改这里，或改同目录的 ProPilotFix.json
 # ==========================================================================
 DEFAULT_CFG = {
-    # 只是示例值，不是任何人的配置。★ 改成你自己的 ★
-    # 地址填到 /v1 为止（例如 https://api.openai.com/v1）；本地服务可留空密钥。
-    "upstream": "https://api.openai.com/v1",
+    # 全部留空 —— 工具不需要你填任何东西。
+    # 地址/密钥/模型都去 ProPilot「大模型服务」里自己填，工具只修 DLL。
+    # 想用命令行批量写注册表时，才需要把下面填上。
+    "upstream": "",
     "api_key": "",
-    "model": "gpt-4o-mini",
+    "model": "",
     "provider_id": 4,           # 4 = Custom（自定义）
 }
 
@@ -150,24 +151,9 @@ def load_cfg(interactive=True):
             return dict(DEFAULT_CFG)
 
     c = dict(DEFAULT_CFG)
-    if interactive:
-        print("=" * 68)
-        print("首次运行：请填 3 项（直接回车用默认值）")
-        print("=" * 68)
-        try:
-            v = input("  接口地址（填到 /v1 为止）[%s]: " % c["upstream"]).strip()
-            if v:
-                c["upstream"] = v
-            v = input("  API 密钥 [%s]: " % (c["api_key"][:12] + "..." if c["api_key"] else "可留空")).strip()
-            if v:
-                c["api_key"] = v
-            v = input("  模型名   [%s]: " % c["model"]).strip()
-            if v:
-                c["model"] = v
-        except (EOFError, KeyboardInterrupt):
-            log("[!] 非交互或输入无效，使用内置默认值。之后可改 " + CFG_FILE)
+    # 不再交互提问：工具不需要任何配置，地址/密钥/模型都在 ProPilot 里填。
     save_cfg(c)
-    log("[i] 配置已写入 " + CFG_FILE + "（以后可用记事本直接改）")
+    log("[i] 配置已写入 " + CFG_FILE + "（全空即可，一般不用动）")
     return c
 
 
@@ -512,6 +498,96 @@ def patch_endpoint(d):
     return changed, notes
 
 
+# ==========================================================================
+#  ③ 真凶补丁：Custom 服务商类把 baseUrl 原样当请求地址，从不拼 /v1/chat/completions
+#
+#  逆向证据（ProPilot.dll 9.2，.rdata 里的 vtable）：
+#    Custom 类的 URL 构造 = 0x180086AE0：QString(baseUrl) -> QUrl -> req.setUrl()
+#        结尾就是 setUrl，不加任何路径 -> POST http://host/  -> 405「资源仅支持 GET 或 HEAD」
+#    标准 OpenAI 兼容类 = 0x180085070：
+#        先 0x180084F00 归一（去掉末尾 '/'），再 append "/v1/chat/completions"，再 setUrl()
+#    两者签名完全一致 (rcx=this, rdx=QNetworkRequest*, r8=provider)，
+#    差别只在 vtable 里的一个函数指针 -> 把 Custom 的槽位指向标准实现即可。
+#
+#  同一张 vtable 里，模型表构造 0x180086CA0 只拼 "/models"（缺 /v1），
+#  也一并换成标准实现 0x180085370（拼 "/v1/models"）。
+#
+#  这是「让用户自己在 ProPilot 里填地址就能连」的关键：不再依赖任何外部配置。
+# ==========================================================================
+VTB_CUSTOM_CHAT = 0x180086AE0      # Custom: url = baseUrl（bug 源头）
+VTB_STD_CHAT = 0x180085070         # 标准: url = baseUrl + /v1/chat/completions
+VTB_CUSTOM_MODELS = 0x180086CA0    # Custom: url = baseUrl + /models
+VTB_STD_MODELS = 0x180085370       # 标准: url = baseUrl + /v1/models
+VTB_CUSTOM_MODEL_NAME = 0x180086C50   # 同表特征：默认模型名 "custom-model"
+VTB_MODELS_NEIGHBOR = 0x18007CFB0     # 模型表槽位的下一个条目（用于二次校验）
+
+
+def _q(d, off):
+    return struct.unpack_from("<Q", d, off)[0]
+
+
+def _put_q(d, off, val):
+    struct.pack_into("<Q", d, off, val)
+
+
+def patch_provider_class(d):
+    """把 Custom 服务商的 URL 构造函数换成标准实现，返回 (改动数, 说明列表)。
+
+    靠 vtable 特征定位，不写死文件偏移，幂等：
+      · chat 槽特征：值为 0x180086AE0，且 +0x38 处是 0x180086C50（同表的 custom-model）
+      · models 槽特征：值为 0x180086CA0，且下一项是 0x18007CFB0
+    """
+    changed, notes = 0, []
+    done_chat = done_models = False
+
+    # ---- chat 槽 ----
+    pat = struct.pack("<Q", VTB_CUSTOM_CHAT)
+    i = 0
+    while True:
+        i = d.find(pat, i)
+        if i < 0:
+            break
+        if i + 0x38 + 8 <= len(d) and _q(d, i + 0x38) == VTB_CUSTOM_MODEL_NAME:
+            _put_q(d, i, VTB_STD_CHAT)
+            changed += 1
+            done_chat = True
+            notes.append("URL 构造 vtable[chat] 0x%X: 原样拼 -> +/v1/chat/completions" % i)
+        i += 8
+
+    # ---- models 槽 ----
+    pat = struct.pack("<Q", VTB_CUSTOM_MODELS)
+    i = 0
+    while True:
+        i = d.find(pat, i)
+        if i < 0:
+            break
+        if i + 16 <= len(d) and _q(d, i + 8) == VTB_MODELS_NEIGHBOR:
+            _put_q(d, i, VTB_STD_MODELS)
+            changed += 1
+            done_models = True
+            notes.append("URL 构造 vtable[models] 0x%X: +/models -> +/v1/models" % i)
+        i += 8
+
+    if not done_chat and b"".join(struct.pack("<Q", VTB_STD_CHAT)) in d:
+        notes.append("chat 槽已是标准实现（补丁已在）")
+    if not done_models and b"".join(struct.pack("<Q", VTB_STD_MODELS)) in d:
+        notes.append("models 槽已是标准实现（补丁已在）")
+    return changed, notes
+
+
+def provider_class_ok(d):
+    """校验：Custom vtable 的 chat 槽是否已指向标准实现。"""
+    pat = struct.pack("<Q", VTB_STD_CHAT)
+    i = 0
+    while True:
+        i = d.find(pat, i)
+        if i < 0:
+            return False
+        if i + 0x38 + 8 <= len(d) and _q(d, i + 0x38) == VTB_CUSTOM_MODEL_NAME:
+            return True
+        i += 8
+
+
 def diff_report(a, b):
     runs, start = [], None
     for i in range(min(len(a), len(b))):
@@ -722,22 +798,37 @@ def reg_fix(cfg):
         log("    [%d] 模型占位符 %r 已复位为 %s" % (pid, cur_model, cfg["model"]))
 
 
-# ==========================================================================
-#  配置校验 / 自检
+def reg_normalize(pid=4):
+    """只把 Custom 的 baseUrl 归一成「根地址」，其余值一个字都不动。
+
+    为什么：补丁后 ProPilot 请求 = baseUrl + "/v1/chat/completions"，
+    所以 baseUrl 必须是根地址。用户以前填过 .../v1 的，这里帮他改回根，避免 /v1/v1。
+    """
+    if not winreg:
+        return
+    p = LC + (r"\Providers\%d" % pid)
+    cur, _ = reg_get(p, "baseUrl")
+    if not cur:
+        log("    [%d] 还没有地址 —— 打开 ProPilot「大模型服务」自己填即可" % pid)
+        return
+    new = upstream_base({"upstream": cur})
+    if new == cur:
+        log("    [%d] 地址已是根地址：%s" % (pid, cur))
+        return
+    reg_set(p, "baseUrl", new)
+    log("    [%d] 地址归一：%s  ->  %s" % (pid, cur, new))
+
+
 # ==========================================================================
 def validate_cfg(cfg):
     errs = []
     up = str(cfg.get("upstream", "")).strip()
-    if not up:
-        errs.append("接口地址不能为空（填到 /v1 为止，例如 http://127.0.0.1:8000/v1）")
-    else:
+    if up:
         try:
             if not urllib.parse.urlsplit(up).hostname:
                 errs.append("接口地址解析不出主机名：%r" % up)
         except Exception as e:
             errs.append("接口地址无法解析：%r" % (e,))
-    if not str(cfg.get("model", "")).strip():
-        errs.append("模型名不能为空")
     return errs
 
 
@@ -899,6 +990,9 @@ def cmd_check(cfg):
     log("  Custom 后缀: 聊天 %s / 模型表 %s   %s" %
         (_cs, _ms, "OK" if (_cs, _ms) == ("/v1/chat/completions", "/v1/models")
          else "[!] 异常，重跑一次「一键修复」会自愈"))
+    log("  Custom URL 构造: %s   %s" %
+        ("标准(补 /v1/chat/completions)" if provider_class_ok(d) else "原版(地址原样发 -> 405)",
+         "OK" if provider_class_ok(d) else "[!] 未修，点「一键修复」"))
 
     secs = pe_sections(d)
     lea_va, sec = o2v(secs, LEA_FO)
@@ -939,10 +1033,8 @@ def cmd_fix(cfg, no_reg=False):
     if errs:
         for e in errs:
             log("[X] 配置错误：" + e)
-        log("    请在界面上改好地址 / 模型再点修复（DLL 未改动）")
+        log("    DLL 未改动")
         return 1
-    log("[0] 生效配置（对账用）")
-    cfg_report(cfg)
 
     try:
         with open(DLL, "r+b"):
@@ -986,6 +1078,14 @@ def cmd_fix(cfg, no_reg=False):
     else:
         log("[3] 地址后缀正常（/v1/chat/completions 已在，无需改动）")
 
+    vtb_ok, vtb_notes = patch_provider_class(data)
+    if vtb_ok:
+        log("[3b] 自定义服务商 URL 构造：改 %d 处（原版 bug：地址原样发，不拼路径）" % vtb_ok)
+    else:
+        log("[3b] 自定义服务商 URL 构造：补丁已在")
+    for n in vtb_notes:
+        log("      " + n)
+
     ui_ok, ui_skip, ui_bad, notes = patch_ui(data)
     log("[4] 汉化（含主窗口标题）：新增 %d 条，已是中文 %d 条，跳过 %d 条" %
         (ui_ok, ui_skip, ui_bad))
@@ -994,11 +1094,20 @@ def cmd_fix(cfg, no_reg=False):
     if len(notes) > 8:
         log("      ... 另有 %d 条" % (len(notes) - 8))
 
-    md_ok, md_msg = patch_model(data, cfg["model"])
-    log("[5] 模型下拉框：" + md_msg)
-    if md_ok < 0:
-        log("[X] 模型补丁校验失败，已中止（DLL 未改动）")
-        return 1
+    model = str(cfg.get("model", "")).strip()
+    if not model and winreg:
+        cur, _ = reg_get(LC + (r"\Providers\%d" % int(cfg.get("provider_id", 4))), "model")
+        if cur and cur not in ("Loading models...", "No Model"):
+            model = cur
+            log("[0] 模型名取自注册表当前值：%s" % model)
+    if model:
+        md_ok, md_msg = patch_model(data, model)
+        log("[5] 模型下拉框：" + md_msg)
+        if md_ok < 0:
+            log("[X] 模型补丁校验失败，已中止（DLL 未改动）")
+            return 1
+    else:
+        log("[5] 模型下拉框：跳过（注册表里还没有模型，去 ProPilot 里选一次即可）")
 
     if bytes(data) != before:
         with open(DLL, "wb") as f:
@@ -1022,23 +1131,29 @@ def cmd_fix(cfg, no_reg=False):
     else:
         log("[6] DLL 无需改动（补丁已在）")
 
+    up = str(cfg.get("upstream", "")).strip()
     if not no_reg and winreg:
-        log("[7] 写注册表")
-        reg_fix(cfg)
+        if up:
+            log("[7] 写注册表（命令行指定了地址）")
+            reg_fix(cfg)
+        else:
+            log("[7] 注册表：只把地址归一成「根地址」，其余一律不动")
+            reg_normalize(int(cfg.get("provider_id", 4)))
     else:
-        log("[7] 跳过注册表写入")
+        log("[7] 跳过注册表")
 
-    log("[8] 上游连通性")
-    probe_upstream(cfg)
+    if up and not no_reg:
+        log("[8] 上游连通性")
+        probe_upstream(cfg)
 
     log("")
-    log("修复完成【只聊天 · 一条路 · 零插件零自启】")
-    log("  你填的地址   : %s" % cfg.get("upstream"))
-    log("  注册表存根地址: %s" % upstream_base(cfg))
-    log("  ProPilot 请求 : %s" % chat_url(cfg))
-    log("  只要上游服务在跑，开机直接开 Proteus 9 就能聊，不用启动任何工具")
-    log("  ★ 不要点设置里的「测试连接」——它把根地址当完整 URL POST，必失败，但不影响聊天")
-    log("  改坏了：在界面点「一键还原」/ rollback 命令")
+    log("修复完成【原版 bug 已修 · 零插件零自启】")
+    log("  在 ProPilot「大模型服务」里自己填：")
+    log("    接口根地址 = 你服务的根地址，填到端口为止（不要带 /v1、不要带 /chat/completions）")
+    log("    例如 http://127.0.0.1:18900   https://api.openai.com   https://api.deepseek.com")
+    log("    密钥 / 模型 = 你自己的，填完点 OK，直接发消息就能聊")
+    log("  修好之后 ProPilot 会自动补 /v1/chat/completions 与 /v1/models")
+    log("  改坏了：点「一键还原」/ rollback 命令")
     return 0
 
 
