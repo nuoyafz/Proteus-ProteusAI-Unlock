@@ -289,7 +289,7 @@ class App(object):
         self.root = root
         self.busy = False
         self.dir_var = tk.StringVar(value="")
-        root.title(TITLE + "    v3.1")
+        root.title(TITLE + "    v3.2")
         root.geometry("760x600")
         root.minsize(680, 520)
         root.configure(bg=BG)

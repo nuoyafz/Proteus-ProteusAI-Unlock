@@ -52,7 +52,7 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-TOOL = "ProPilotFix 3.1"
+TOOL = "ProPilotFix 3.2"
 
 # 主窗口标题：写死在程序里，界面、配置文件、命令行都改不了
 WINDOW_TITLE = "ProPilotFix"
@@ -165,6 +165,15 @@ def load_cfg(interactive=True):
     # 不再交互提问：工具不需要任何配置，地址/密钥/模型都在 ProPilot 里填。
     save_cfg(c)
     log("[i] 配置已写入 " + CFG_FILE + "（全空即可，一般不用动）")
+    return c
+
+
+def norm_cfg(cfg):
+    """GUI 传的是空 dict，这里统一补齐所有键，避免 cfg["model"] 这类直取 KeyError。"""
+    c = dict(DEFAULT_CFG)
+    if isinstance(cfg, dict):
+        c.update(cfg)
+    c.pop("window_title", None)     # 标题写死，旧配置残留也不生效
     return c
 
 
@@ -878,13 +887,26 @@ def validate_cfg(cfg):
 
 
 def cfg_report(cfg):
-    """把「实际生效」的配置打出来对账，专治「配置写了但代码没读」。"""
-    log("    你填的地址 : " + str(cfg.get("upstream", "")))
-    log("    你填的地址 : " + str(cfg.get("upstream")))
-    log("    注册表存   : " + upstream_base(cfg) + "   （根地址）")
-    log("    实际请求   : " + chat_url(cfg))
-    log("    模型表     : " + models_url(cfg))
-    log("    模型       : " + str(cfg.get("model", "")))
+    """把「实际生效」的配置打出来对账，专治「配置写了但代码没读」。
+    cfg 里 upstream 为空时（GUI 常态）回落到注册表当前值，保证打印的是真实生效值。"""
+    up = str(cfg.get("upstream", "")).strip()
+    src = "命令行/配置"
+    if not up and winreg:
+        try:
+            up = reg_get(LC + (r"\Providers\%d" % int(cfg.get("provider_id", 4))), "baseUrl")[0] or ""
+            src = "ProPilot 注册表"
+        except Exception:
+            up = ""
+    eff = dict(cfg)
+    eff["upstream"] = up
+    log("    地址来源   : " + (src if up else "（空，等你在 ProPilot 里填）"))
+    log("    你填的地址 : " + up)
+    log("    注册表存   : " + (upstream_base(eff) or "-") + "   （根地址）")
+    log("    实际请求   : " + (chat_url(eff) if up else "-"))
+    log("    模型表     : " + (models_url(eff) if up else "-"))
+    log("    模型       : " + str(cfg.get("model", "") or
+                               (reg_get(LC + (r"\Providers\%d" % int(cfg.get("provider_id", 4))), "model")[0]
+                                if winreg else "")))
     log("    密钥       : " + _mask(cfg.get("api_key")))
     log("    窗口标题   : %s（写死，不可改）   汉化条目=%d" %
         (WINDOW_TITLE, len(ui_items())))
@@ -1005,6 +1027,7 @@ def probe_upstream(cfg):
 #  命令
 # ==========================================================================
 def cmd_check(cfg):
+    cfg = norm_cfg(cfg)
     log("=" * 74)
     log(TOOL + " 只读体检  " + time.strftime("%Y-%m-%d %H:%M:%S"))
     log("=" * 74)
@@ -1040,12 +1063,25 @@ def cmd_check(cfg):
          "OK" if provider_class_ok(d) else "[!] 未修，点「一键修复」"))
 
     secs = pe_sections(d)
+    tgt_model = str(cfg.get("model") or "").strip()
+    if not tgt_model and winreg:
+        try:
+            cur_m = reg_get(LC + (r"\Providers\%d" % int(cfg.get("provider_id", 4))), "model")[0]
+            if cur_m and cur_m not in ("Loading models...", "No Model"):
+                tgt_model = cur_m
+        except Exception:
+            pass
     lea_va, sec = o2v(secs, LEA_FO)
     if sec == ".text" and d[LEA_FO:LEA_FO + 3] == b"\x48\x8d\x15":
         disp = struct.unpack_from("<i", d, LEA_FO + 3)[0]
-        log("  模型首项: %r  %s" %
-            (cstr(d, secs, lea_va + 7 + disp),
-             "(已是目标)" if cstr(d, secs, lea_va + 7 + disp) == cfg["model"] else "(仍是旧值)"))
+        cur_lea = cstr(d, secs, lea_va + 7 + disp)
+        if not tgt_model:
+            tail = "(注册表里还没模型，去 ProPilot 里选一次即可)"
+        elif cur_lea == tgt_model:
+            tail = "(已是目标)"
+        else:
+            tail = "(仍是旧值，点「一键修复」写成本机的模型)"
+        log("  模型首项: %r  %s" % (cur_lea, tail))
     else:
         log("  模型首项: [!] LEA 指令不匹配，模型补丁会跳过")
 
@@ -1066,6 +1102,7 @@ def cmd_check(cfg):
 
 
 def cmd_fix(cfg, no_reg=False):
+    cfg = norm_cfg(cfg)
     log("=" * 74)
     log(TOOL + " 一键修复  " + time.strftime("%Y-%m-%d %H:%M:%S"))
     log("=" * 74)

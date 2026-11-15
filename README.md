@@ -166,6 +166,16 @@ pyinstaller --noconfirm --clean --onefile --windowed --name ProPilotFix ProPilot
 
 ---
 
+## 六、更新记录
+
+| 版本 | 内容 |
+| --- | --- |
+| 3.2 | 修「只读体检」报 `KeyError('model')`（界面传空配置时崩溃）；对账区改为回落到注册表真实值，直接显示实际请求 URL |
+| 3.1 | 修界面全空（卡片容器没进布局）；ProPilot 设置对话框标题追加签名 `设置 · NoYa修复版` |
+| 3.0 | 真正修原版 bug：把 Custom 服务商的 URL 构造函数指针改指向标准实现，地址按你填的原样拼 `/v1/chat/completions`，工具零配置 |
+
+---
+
 ## 免责声明
 
 仅供学习研究与个人使用。修改的是你本机已购买的 Proteus 安装目录内的 DLL，请自行备份（工具会自动备份 `ProPilot.dll.orig`）。因使用本工具造成的任何问题由使用者自行承担。Proteus / ProPilot 版权归 Labcenter Electronics 所有。
