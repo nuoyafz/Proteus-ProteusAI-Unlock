@@ -52,7 +52,7 @@ except ImportError:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-TOOL = "ProPilotFix 3.2"
+TOOL = "ProPilotFix 3.3"
 
 # 主窗口标题：写死在程序里，界面、配置文件、命令行都改不了
 WINDOW_TITLE = "ProPilotFix"
@@ -622,9 +622,9 @@ def patch_provider_class(d):
             notes.append("URL 构造 vtable[models] 0x%X: +/models -> +/v1/models" % i)
         i += 8
 
-    if not done_chat and b"".join(struct.pack("<Q", VTB_STD_CHAT)) in d:
+    if not done_chat and struct.pack("<Q", VTB_STD_CHAT) in d:
         notes.append("chat 槽已是标准实现（补丁已在）")
-    if not done_models and b"".join(struct.pack("<Q", VTB_STD_MODELS)) in d:
+    if not done_models and struct.pack("<Q", VTB_STD_MODELS) in d:
         notes.append("models 槽已是标准实现（补丁已在）")
     return changed, notes
 

@@ -170,6 +170,7 @@ pyinstaller --noconfirm --clean --onefile --windowed --name ProPilotFix ProPilot
 
 | 版本 | 内容 |
 | --- | --- |
+| 3.3 | 修「一键修复」在 DLL 已打过补丁时报 `TypeError: sequence item 0: expected a bytes-like object, int found`（`b"".join(pack(...))` 写法错误），重复运行不再中断 |
 | 3.2 | 修「只读体检」报 `KeyError('model')`（界面传空配置时崩溃）；对账区改为回落到注册表真实值，直接显示实际请求 URL |
 | 3.1 | 修界面全空（卡片容器没进布局）；ProPilot 设置对话框标题追加签名 `设置 · NoYa修复版` |
 | 3.0 | 真正修原版 bug：把 Custom 服务商的 URL 构造函数指针改指向标准实现，地址按你填的原样拼 `/v1/chat/completions`，工具零配置 |
